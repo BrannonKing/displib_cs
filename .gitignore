@@ -1,0 +1,8 @@
+
+.idea/
+
+program/bin/
+
+program/obj/
+
+*.user
