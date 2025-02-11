@@ -25,7 +25,7 @@ public class Edge(int u, int v) {
     }
 
     public override int GetHashCode() {
-        return U.GetHashCode() * 31 + V.GetHashCode();
+        return U.GetHashCode() * 307 + V.GetHashCode();
     }
 
     public override string ToString() {

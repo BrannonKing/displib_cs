@@ -286,7 +286,7 @@ class Program
                     return;
                 }
                 catch (Exception ex) {
-                    Console.WriteLine("Exception!" + ex);
+                    Console.WriteLine("Exception! " + ex);
                 }
             }
             
@@ -358,8 +358,8 @@ class Program
         
         if (model.SolCount > 0) {
             var lastGraph = cb.GetFinalGraph();
-            var sorted = lastGraph.TopologicalSort(-1);
-            return ExtractSolution(((GRBLinExpr)model.GetObjective()).Value, problem, outerStarts, outerEnablers, sorted);
+            var topoSort = lastGraph.TopologicalSort(-1);
+            return ExtractSolution(((GRBLinExpr)model.GetObjective()).Value, problem, outerStarts, outerEnablers, topoSort);
         }
         var env = model.GetEnv();
         model.Dispose();
@@ -368,10 +368,10 @@ class Program
     }
 
     private static Solution ExtractSolution(double objectiveValue, Problem problem, List<List<GRBVar>> outerStarts,
-        List<Dictionary<(int, int), GRBVar>> outerEnablers, List<int> sorted) {
+        List<Dictionary<(int, int), GRBVar>> outerEnablers, List<int> topoSort) {
         var lookup = new Dictionary<int, int>();
-        for(var i = 0; i < sorted.Count; i++) {
-            lookup[i] = sorted[i];
+        for(var i = 0; i < topoSort.Count; i++) {
+            lookup[topoSort[i]] = i;
         }
         var solution = new Solution
         {
@@ -406,9 +406,8 @@ class Program
             var ret = a.Time.CompareTo(b.Time);
             if (ret != 0)
                 return ret;
-            if (a.Train == b.Train) {
+            if (a.Train == b.Train)
                 return a.Operation.CompareTo(b.Operation);
-            }
 
             var ha = lookup.TryGetValue((a.Train << 16) | a.Operation, out var la);
             var hb = lookup.TryGetValue((b.Train << 16) | b.Operation, out var lb);
@@ -421,11 +420,11 @@ class Program
         return solution;
     }
 
-    static void Main()
-    {
-        var problemFile = "../../../../../displib_instances_testing/displib_instances_testing/displib_testinstances_swapping1.json";
+    static void Main() {
+        
+        // var problemFile = "../../../../../displib_instances_testing/displib_instances_testing/displib_testinstances_swapping1.json";
         //var problemFile = "../../../../../displib_instances_phase1/line1_full_7.json";
-        // var problemFile = "../../../../../displib_instances_phase1/line1_critical_5.json";
+        var problemFile = "../../../../../displib_instances_phase1/line1_critical_5.json";
         var problem = Problem.LoadFromFile(problemFile);
         Console.WriteLine("Building model for " + problem.Name);
         var solution = BuildAndOptimize(problem, 1000, true);
