@@ -2,6 +2,10 @@
 Microsoft Visual Studio Solution File, Format Version 12.00
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "program", "program\program.csproj", "{5ECB9AA1-D6EB-41BD-A292-BB4B06172635}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "balas", "balas\balas.csproj", "{E7A75FA7-FEE6-4778-AD3E-280C3DD7B1CC}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Shared", "Shared\Shared.csproj", "{F124BF06-6531-43CA-908A-7C13A2347A0C}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -12,5 +16,13 @@ Global
 		{5ECB9AA1-D6EB-41BD-A292-BB4B06172635}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{5ECB9AA1-D6EB-41BD-A292-BB4B06172635}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{5ECB9AA1-D6EB-41BD-A292-BB4B06172635}.Release|Any CPU.Build.0 = Release|Any CPU
+		{E7A75FA7-FEE6-4778-AD3E-280C3DD7B1CC}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{E7A75FA7-FEE6-4778-AD3E-280C3DD7B1CC}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{E7A75FA7-FEE6-4778-AD3E-280C3DD7B1CC}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{E7A75FA7-FEE6-4778-AD3E-280C3DD7B1CC}.Release|Any CPU.Build.0 = Release|Any CPU
+		{F124BF06-6531-43CA-908A-7C13A2347A0C}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{F124BF06-6531-43CA-908A-7C13A2347A0C}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{F124BF06-6531-43CA-908A-7C13A2347A0C}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{F124BF06-6531-43CA-908A-7C13A2347A0C}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal

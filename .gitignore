@@ -6,3 +6,11 @@ program/bin/
 program/obj/
 
 *.user
+
+balas/bin/
+
+balas/obj/
+
+Shared/bin/
+
+Shared/obj/
