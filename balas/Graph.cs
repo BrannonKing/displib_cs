@@ -40,7 +40,7 @@ public class Graph {
 
     public Graph Clone() {
         var clone = new Graph {
-            _adj = _adj.ToDictionary(kvp => kvp.Key, kvp => kvp.Value)
+            _adj = _adj.ToDictionary(kvp => kvp.Key, kvp => new List<int>(kvp.Value))
         };
         return clone;
     }
@@ -59,6 +59,10 @@ public class Graph {
         if (!_adj.ContainsKey(v)) {
             _adj[v] = new List<int>();
         }
+    }
+    
+    public IReadOnlyList<int> Successors(int u) {
+        return _adj.TryGetValue(u, out var value) ? value : new List<int>();
     }
 
     // Removes the edge from u to v.
@@ -135,7 +139,7 @@ public class Graph {
         cycle = null;
         return true;
     }
-
+    
     // Prints all the edges.
     public void PrintEdges() {
         Console.WriteLine("Graph edges:");
@@ -151,20 +155,20 @@ public class Graph {
     public List<int> TopologicalSort(int? start = null)
     {
         // Use DFS-based postorder traversal.
-        var visited = new Dictionary<int, bool>();
+        var visited = new Dictionary<int, int>();
         foreach (var node in _adj.Keys)
-        {
-            visited[node] = false;
-        }
+            visited[node] = 0;
         var sorted = new List<int>();
 
-        if (start != null) {
-            TopologicalSortDfs(start.Value, visited, sorted);
+        if (start.HasValue) {
+            if (!TopologicalSortDfs(start.Value, visited, sorted))
+                return null;
         }
         else {
             foreach (var node in _adj.Keys) {
-                if (!visited[node]) {
-                    TopologicalSortDfs(node, visited, sorted);
+                if (visited[node] == 0) {
+                    if (!TopologicalSortDfs(node, visited, sorted))
+                        return null;
                 }
             }
         }
@@ -177,20 +181,25 @@ public class Graph {
     /// <summary>
     /// Helper DFS method for topological sorting.
     /// </summary>
-    private void TopologicalSortDfs(int node, Dictionary<int, bool> visited, List<int> sorted)
+    private bool TopologicalSortDfs(int node, Dictionary<int, int> visited, List<int> sorted)
     {
-        visited[node] = true;
+        visited[node] = 1;
         if (_adj.TryGetValue(node, out var neighbors))
         {
             foreach (var neighbor in neighbors)
             {
-                if (!visited[neighbor])
-                {
-                    TopologicalSortDfs(neighbor, visited, sorted);
+                if (visited[neighbor] == 0) {
+                    if (!TopologicalSortDfs(neighbor, visited, sorted))
+                        return false;
+                }
+                else if (visited[neighbor] == 1) {
+                    return false;
                 }
             }
         }
+        visited[node] = 2;
         sorted.Add(node);
+        return true;
     }
 
 

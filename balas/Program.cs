@@ -133,10 +133,10 @@ class Program
                     
                     foreach (var v1 in v1succs)
                     {
+                        var v1s = v1 < 0 ? u1s + problem.Trains[t1][v1t].MinDuration : outerStarts[t1][v1];
+                        var en1 = outerEnablers[t1].GetValueOrDefault((v1t, v1), null);
                         foreach (var v2 in v2succs)
                         {
-                            var v1s = v1 < 0 ? u1s + problem.Trains[t1][v1t].MinDuration : outerStarts[t1][v1];
-                            var en1 = outerEnablers[t1].GetValueOrDefault((v1t, v1), null);
                             var oei1 = new GRBLinExpr(0);
                             if (en1 is not null)
                                 oei1 -= upperBound * (1 - en1);
@@ -185,55 +185,61 @@ class Program
         return (model, outerStarts, outerEnablers, disjunctions);
     }
 
-    class EnCB : GRBCallback
+    class BalasCallback : GRBCallback
     {
-        public readonly GRBVar[] AllVariables;
+        private readonly GRBVar[] _allVariables;
+        private readonly Graph _baseGraph = new();
+        private readonly List<Dictionary<(int, int), GRBVar>> _outerEnablers;
+        private readonly Dictionary<(int, int), (int, bool)> _choices = new();
+        private readonly Problem _problem;
+        private readonly Dictionary<(int, int), (int, int)> _disjunctPairs = new();
 
-        private readonly Graph baseGraph = new();
-        private bool wantsExit;
-        private int calls;
-        private List<Dictionary<(int, int), GRBVar>> outerEnablers;
-        private readonly Dictionary<(int, int), (int, bool)> choices = new();
-        
-        public EnCB(Problem problem, List<Dictionary<(int, int), GRBVar>> enablers, Dictionary<(int, int, int, int), GRBVar> disjunctions)
+        private bool _wantsExit;
+        private int _calls;
+
+        public BalasCallback(Problem problem, List<Dictionary<(int, int), GRBVar>> enablers, Dictionary<(int, int, int, int), GRBVar> disjunctions)
         {
-            outerEnablers = enablers;
+            _outerEnablers = enablers;
+            _problem = problem;
 
             var variables = new List<GRBVar>();
             for (int t = 0; t < problem.Trains.Count; t++) {
-                baseGraph.AddEdge(-1, t << 16);
+                _baseGraph.AddEdge(-1, t << 16);
                 for (int u = 1; u < problem.Trains[t].Count; u++) {
                     foreach (var p in problem.Trains[t][u].Predecessors) {
                         if (!enablers[t].ContainsKey((p, u)))
-                            baseGraph.AddEdge((t << 16) | p, (t << 16) | u);
+                            _baseGraph.AddEdge((t << 16) | p, (t << 16) | u);
                         else {
-                            choices[((t << 16) | p, (t << 16) | u)] = (variables.Count, false);
+                            _choices[((t << 16) | p, (t << 16) | u)] = (variables.Count, false);
                             variables.Add(enablers[t][(p, u)]);
                         }
                     }
                 }
             }
-
+            
             foreach (var ((u1, v1, u2, v2), variable) in disjunctions) {
-                choices[(u1, v1)] = (variables.Count, false);
+                _disjunctPairs[(v1, u2)] = (v2, u1);
+                _disjunctPairs[(v2, u1)] = (v1, u2);
+                
+                _choices[(v1, u2)] = (variables.Count, false);
                 variables.Add(variable);
-                choices[(u2, v2)] = (variables.Count, true);  // TODO: validate with choice
+                _choices[(v2, u1)] = (variables.Count, true);  // TODO: validate with choice
                 variables.Add(variable);
             }
             
-            AllVariables = variables.ToArray();
+            _allVariables = variables.ToArray();
             
             Console.CancelKeyPress += (sender, e) =>
             {
                 Console.WriteLine("Ctrl+C detected, stopping optimization...");
-                wantsExit = true;
+                _wantsExit = true;
                 e.Cancel = true; // Prevent immediate process termination
             };
 
         }
         protected override void Callback()
         {
-            if (wantsExit) {
+            if (_wantsExit) {
                 Abort();
                 return;
             }
@@ -245,44 +251,46 @@ class Program
                 // then check for cycles.
                 // if we have a cycle, add a cut that disallows the segments in the cycle that are enables or disjuncts.
                 try {
-                    var values = GetSolution(AllVariables);
-                    var g = baseGraph.Clone();
-                    foreach (var ((u, v), (index, invert)) in choices) {
+                    var values = GetSolution(_allVariables);
+                    var g = _baseGraph.Clone();
+                    foreach (var ((u, v), (index, invert)) in _choices) {
                         if (!invert && values[index] > 0.5)
                             g.AddEdge(u, v);
                         else if (invert && values[index] < 0.5)
                             g.AddEdge(u, v);
                     }
 
-                    var acyc = g.IsAcyclic(out var cycle);
-                    if (!acyc) {
+                    var acyclic = g.IsAcyclic(out var cycle);
+                    if (!acyclic) {
                         var lazyConstraint = new GRBLinExpr(0);
                         var found = 0;
                         for (int i = 1; i < cycle.Count; i++) {
-                            if (choices.TryGetValue((cycle[i - 1], cycle[i]), out var pair)) {
+                            if (_choices.TryGetValue((cycle[i - 1], cycle[i]), out var pair)) {
                                 var (idx, inv) = pair;
                                 if (inv)
-                                    lazyConstraint += 1 - AllVariables[idx];
+                                    lazyConstraint += 1 - _allVariables[idx];
                                 else
-                                    lazyConstraint += AllVariables[idx];
-                                found++;
-                            }
-                            else if (choices.TryGetValue((cycle[i], cycle[i - 1]), out pair)) {
-                                var (idx, inv) = pair;
-                                if (!inv)
-                                    lazyConstraint += 1 - AllVariables[idx];
-                                else
-                                    lazyConstraint += AllVariables[idx];
+                                    lazyConstraint += _allVariables[idx];
                                 found++;
                             }
                         }
 
                         AddLazy(lazyConstraint <= found - 1);
-                        Console.WriteLine("Cycled!");
+                        // Console.WriteLine("Cycled!");
                         return;
                     }
 
-                    Console.WriteLine("Golden!");
+                    Console.WriteLine("Golden! Burn it down!");
+                    // var score = (int)Math.Round(GetDoubleInfo(GRB.Callback.MIPSOL_OBJBST));
+                    var score = 1000000000; 
+                    var success = BurnDown(g, score, values);
+                    if (success) {
+                        SetSolution(_allVariables, values);
+                        var objective = UseSolution();
+                        if (objective < GRB.INFINITY) {
+                            Console.WriteLine("We found one! Objective: " + objective);
+                        }
+                    }
                     return;
                 }
                 catch (Exception ex) {
@@ -306,11 +314,11 @@ class Program
             //         return;
             //     }
             // }
-            calls++;
-            if (calls % 1000 == 0)
+            _calls++;
+            if (_calls % 1000 == 0)
             {
                 int good = 0;
-                var values = outerEnablers.SelectMany(oe => oe.Values).ToArray();
+                var values = _outerEnablers.SelectMany(oe => oe.Values).ToArray();
                 var rel = GetNodeRel(values);
                 foreach (var en in rel)
                 {
@@ -320,17 +328,113 @@ class Program
                     }
                 }
 
-                Console.WriteLine($"At {calls}: {good} / {values.Length}");
+                Console.WriteLine($"At {_calls}: {good} / {values.Length}");
             }
 
         }
 
+        private (List<int>, int) GetLongestPath(Graph graph) {
+            var topoSort = graph.TopologicalSort(-1);
+            if (topoSort == null) {
+                return (null, 1000000000);
+            }
+            var distances = new Dictionary<int, int>();
+            var prevs = new Dictionary<int, int>();
+            distances[-1] = 0;
+            foreach (var u in topoSort) {
+                var tu = u >> 16;
+                foreach (var v in graph.Successors(u)) {
+                    var tv = v >> 16;
+                    var cost = 0;
+                    var lb = 0;
+                    if (tu == tv) {
+                        cost = _problem.Trains[tu][u & 0xffff].MinDuration;
+                        lb = _problem.Trains[tu][u & 0xffff].StartLb;
+                    }
+                    var cumulative = Math.Max(distances[u] + cost, lb);
+                    if (!distances.TryGetValue(v, out var value) || value < cumulative) {
+                        distances[v] = cumulative;
+                        prevs[v] = u;
+                    }
+                }
+            }
+            
+            // find the key in distances having the largest value:
+            var max = distances.Aggregate((l, r) => l.Value > r.Value ? l : r).Key;
+            var maxDistance = distances[max];
+            var path = new List<int>();
+            while (max != -1) {
+                path.Add(max);
+                max = prevs[max];
+            }
+
+            path.Reverse();
+            return (path, maxDistance);
+        }
+
+        private (int, IEnumerable<(int, int)>) RecursiveBurnDown(Graph graph, Dictionary<(int, int), int> keepers, int bestScore) {
+            // for each pair in the longest path
+            // if it is swappable (a disjunction) and not swapped yet
+            // remove that edge and add the reverse
+            // score = recurse
+            // if score is better store the swap
+            // restore the original edge and remove its reverse
+            var (path, cost) = GetLongestPath(graph);
+            if (cost > bestScore) {
+                return (cost, null);
+            }
+
+            bestScore = cost;
+            IEnumerable<(int, int)> bestSwaps = null;
+            for (var i = 1; i < path.Count; ++i) {
+                var (u, v) = (path[i - 1], path[i]);
+                if (_disjunctPairs.ContainsKey((u, v))) {
+                    if (keepers.ContainsKey((u, v)))
+                        continue;
+                    graph.RemoveEdge(u, v);
+                    var opposite = _disjunctPairs[(u, v)];
+                    graph.AddEdge(opposite.Item1, opposite.Item2);
+                    keepers[opposite] = 1;
+                    var (score, swaps) = RecursiveBurnDown(graph, keepers, bestScore);
+                    if (score < bestScore) {
+                        bestScore = score;
+                        bestSwaps = new List<(int, int)> { (u, v) };
+                        if (swaps != null)
+                            bestSwaps = bestSwaps.Concat(swaps);
+                    }
+                    graph.RemoveEdge(opposite.Item1, opposite.Item2);
+                    graph.AddEdge(u, v);
+                    // we can run with and without this next line.
+                    // without it, we search a smaller space, and that would be good if we knew
+                    // that it was rare for this to enable a better solution. 
+                    keepers.Remove(opposite);
+                }
+            }
+            return (bestScore, bestSwaps);
+        }
+
+        private bool BurnDown(Graph graph, int score, double[] values) {
+            var keepers = new Dictionary<(int, int), int>();
+            var (reducedScore, swaps) = RecursiveBurnDown(graph, keepers, score);
+            if (swaps != null && reducedScore > 0 && reducedScore < score) {
+                Console.WriteLine($"Found better solution of {reducedScore} < {score}.");
+                foreach (var swap in swaps) {
+                    var (index, inv) = _choices[swap];
+                    values[index] = inv ? 1.0 : 0.0;
+                    (index, inv) = _choices[_disjunctPairs[swap]];
+                    values[index] = inv ? 0.0 : 1.0;
+                }
+                return true;
+            }
+            return false;
+        }
+
         public Graph GetFinalGraph() {
-            var g = baseGraph.Clone();
-            foreach (var ((u, v), (index, invert)) in choices) {
-                if (!invert && AllVariables[index].X > 0.5)
+            var g = _baseGraph.Clone();
+            foreach (var ((u, v), (index, invert)) in _choices) {
+                if (!invert && _allVariables[index].X > 0.5)
                     g.AddEdge(u, v);
-                else if (invert && AllVariables[index].X < 0.5)
+                else if (invert && _allVariables[index].X < 0.5)
                     g.AddEdge(u, v);
             }
 
@@ -347,12 +451,12 @@ class Program
         // model.Parameters.Cuts = 0;
         // model.Parameters.Method = 2;
         // model.Parameters.Crossover = 1;
-        model.Parameters.Method = 1;
-        model.Parameters.Crossover = 0;
+        // model.Parameters.Method = 1;
+        // model.Parameters.Crossover = 0;
         model.Parameters.TimeLimit = maxTime;
         model.Parameters.LazyConstraints = 1;
 
-        var cb = new EnCB(problem, outerEnablers, disjunctions);
+        var cb = new BalasCallback(problem, outerEnablers, disjunctions);
         model.SetCallback(cb);
         model.Optimize();
         
@@ -422,9 +526,9 @@ class Program
 
     static void Main() {
         
-        // var problemFile = "../../../../../displib_instances_testing/displib_instances_testing/displib_testinstances_swapping1.json";
+        //var problemFile = "../../../../../displib_instances_testing/displib_instances_testing/displib_testinstances_headway1.json";
         //var problemFile = "../../../../../displib_instances_phase1/line1_full_7.json";
-        var problemFile = "../../../../../displib_instances_phase1/line1_critical_5.json";
+        var problemFile = "../../../../../displib_instances_phase1/line1_critical_4.json";
         var problem = Problem.LoadFromFile(problemFile);
         Console.WriteLine("Building model for " + problem.Name);
         var solution = BuildAndOptimize(problem, 1000, true);
