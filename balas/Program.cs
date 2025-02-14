@@ -191,6 +191,7 @@ class Program
         private readonly Graph _baseGraph = new();
         private readonly List<Dictionary<(int, int), GRBVar>> _outerEnablers;
         private readonly Dictionary<(int, int), (int, bool)> _choices = new();
+        private readonly int _enablerChoices;
         private readonly Problem _problem;
         private readonly Dictionary<(int, int), (int, int)> _disjunctPairs = new();
 
@@ -216,6 +217,8 @@ class Program
                     }
                 }
             }
+
+            _enablerChoices = variables.Count;
             
             foreach (var ((u1, v1, u2, v2), variable) in disjunctions) {
                 _disjunctPairs[(v1, u2)] = (v2, u1);
@@ -254,13 +257,13 @@ class Program
                     var values = GetSolution(_allVariables);
                     var g = _baseGraph.Clone();
                     foreach (var ((u, v), (index, invert)) in _choices) {
-                        if (!invert && values[index] > 0.5)
+                        if (!invert && values[index] >= 0.5)
                             g.AddEdge(u, v);
                         else if (invert && values[index] < 0.5)
                             g.AddEdge(u, v);
                     }
 
-                    var acyclic = g.IsAcyclic(out var cycle);
+                    var acyclic = g.IsAcyclic(-1, out var cycle);
                     if (!acyclic) {
                         var lazyConstraint = new GRBLinExpr(0);
                         var found = 0;
@@ -268,7 +271,7 @@ class Program
                             if (_choices.TryGetValue((cycle[i - 1], cycle[i]), out var pair)) {
                                 var (idx, inv) = pair;
                                 if (inv)
-                                    lazyConstraint += 1 - _allVariables[idx];
+                                    lazyConstraint += (1 - _allVariables[idx]);
                                 else
                                     lazyConstraint += _allVariables[idx];
                                 found++;
@@ -280,17 +283,17 @@ class Program
                         return;
                     }
 
-                    Console.WriteLine("Golden! Burn it down!");
-                    // var score = (int)Math.Round(GetDoubleInfo(GRB.Callback.MIPSOL_OBJBST));
-                    var score = 1000000000; 
-                    var success = BurnDown(g, score, values);
-                    if (success) {
-                        SetSolution(_allVariables, values);
-                        var objective = UseSolution();
-                        if (objective < GRB.INFINITY) {
-                            Console.WriteLine("We found one! Objective: " + objective);
-                        }
-                    }
+                    // Console.WriteLine("Golden! Burn it down!");
+                    // // var score = (int)Math.Round(GetDoubleInfo(GRB.Callback.MIPSOL_OBJBST));
+                    // var score = 1000000000; 
+                    // var success = BurnDown(g, score, values);
+                    // if (success) {
+                    //     SetSolution(_allVariables, values);
+                    //     var objective = UseSolution();
+                    //     if (objective < GRB.INFINITY) {
+                    //         Console.WriteLine("We found one! Objective: " + objective);
+                    //     }
+                    // }
                     return;
                 }
                 catch (Exception ex) {
@@ -301,36 +304,72 @@ class Program
             if (where != GRB.Callback.MIPNODE || GetIntInfo(GRB.Callback.MIPNODE_STATUS) != GRB.Status.OPTIMAL) 
                 return;
             
-            // 20% chance to try to find a greedy solution:
-            if (Random.Shared.NextSingle() < 0.8) {
+            // chance to try to find a greedy solution:
+            if (Random.Shared.NextSingle() < 0.95) {
                 return;
             }
 
-            return; // tmp
-
-            // var vars = GetNodeRel(all_vars);
-            // foreach (var key in enablerKeys) {
-            //     if (vars[key] is > .25 and < 0.75) {
-            //         return;
-            //     }
-            // }
-            _calls++;
-            if (_calls % 1000 == 0)
-            {
-                int good = 0;
-                var values = _outerEnablers.SelectMany(oe => oe.Values).ToArray();
-                var rel = GetNodeRel(values);
-                foreach (var en in rel)
-                {
-                    if (en is > .75 or < 0.25)
-                    {
-                        good++;
-                    }
+            var nodeValues = GetNodeRel(_allVariables);
+            for (var i = 0; i < _enablerChoices; i++) {
+                if (nodeValues[i] is > .25 and < 0.75) {
+                    return;
                 }
-
-                Console.WriteLine($"At {_calls}: {good} / {values.Length}");
+            }
+            
+            // build a graph with the chosen paths. Then complete the disjunctions for it.
+            var nodeG = _baseGraph.Clone();
+            var disjuncts = new List<(Edge, Edge)>();
+            foreach (var ((u, v), (index, invert)) in _choices) {
+                if (nodeValues[index] is <= .25 or >= 0.75) {
+                    if (!invert && nodeValues[index] >= 0.75)
+                        nodeG.AddEdge(u, v);
+                    else if (invert && nodeValues[index] <= 0.25)
+                        nodeG.AddEdge(u, v);
+                }
+                else {
+                    var far = _disjunctPairs[(u, v)];
+                    var farEdge = new Edge(far.Item1, far.Item2);
+                    // we'll hit a choice for the far edge later, and we want to skip that one.
+                    if (nodeG.HasEdge(far.Item1, far.Item2))
+                        continue;
+                    disjuncts.Add((new Edge(u, v), farEdge));
+                }
             }
 
+            var noCycles = nodeG.AddReversibleEdgesWithBacktracking(disjuncts);
+            if (noCycles) {
+                for (int i = 0; i < nodeValues.Length; i++) {
+                    nodeValues[i] = Math.Round(nodeValues[i]);
+                }
+
+                foreach (var (edge1, edge2) in disjuncts) {
+                    double one = 1.0, zero = 0.0;
+                    if (nodeG.HasEdge(edge2.U, edge2.V)) {
+                        one = 0.0;
+                        zero = 1.0;
+                    }
+                    var (index, invert) = _choices[(edge1.U, edge1.V)];
+                    nodeValues[index] = invert ? zero : one;
+                    (index, invert) = _choices[(edge2.U, edge2.V)];
+                    nodeValues[index] = invert ? one : zero;
+                }
+                
+                // var score = 1000000000; 
+                // var success = BurnDown(nodeG, score, nodeValues);
+                // if (success) {
+                //     SetSolution(_allVariables, nodeValues);
+                //     var objective2 = UseSolution();
+                //     if (objective2 < GRB.INFINITY) {
+                //         Console.WriteLine("We found one burnt! Objective: " + objective2);
+                //     }
+                // }
+                
+                SetSolution(_allVariables, nodeValues);
+                var objective = UseSolution();
+                if (objective < GRB.INFINITY) {
+                    Console.WriteLine("We found one on a MIP node! Objective: " + objective);
+                }
+            }
         }
 
         private (List<int>, int) GetLongestPath(Graph graph) {
@@ -380,7 +419,7 @@ class Program
             // if score is better store the swap
             // restore the original edge and remove its reverse
             var (path, cost) = GetLongestPath(graph);
-            if (cost > bestScore) {
+            if (cost >= bestScore) {
                 return (cost, null);
             }
 
@@ -528,7 +567,7 @@ class Program
         
         //var problemFile = "../../../../../displib_instances_testing/displib_instances_testing/displib_testinstances_headway1.json";
         //var problemFile = "../../../../../displib_instances_phase1/line1_full_7.json";
-        var problemFile = "../../../../../displib_instances_phase1/line1_critical_4.json";
+        var problemFile = "../../../../../displib_instances_phase1/line1_critical_6.json";
         var problem = Problem.LoadFromFile(problemFile);
         Console.WriteLine("Building model for " + problem.Name);
         var solution = BuildAndOptimize(problem, 1000, true);

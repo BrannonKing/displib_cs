@@ -61,6 +61,10 @@ public class Graph {
         }
     }
     
+    public bool HasEdge(int u, int v) {
+        return _adj.TryGetValue(u, out var value) && value.Contains(v);
+    }
+    
     public IReadOnlyList<int> Successors(int u) {
         return _adj.TryGetValue(u, out var value) ? value : new List<int>();
     }
@@ -86,23 +90,40 @@ public class Graph {
     /// Checks whether the graph is acyclic.
     /// If a cycle is found, it returns false and outputs one cycle (as a list of nodes, with the first and last node being the same).
     /// </summary>
-    public bool IsAcyclic(out List<int> cycle) {
+    public bool IsAcyclic(int? start, out List<int> cycle) {
         cycle = null;
         // 0 = unvisited, 1 = visiting, 2 = visited.
         var state = new Dictionary<int, int>();
         foreach (var node in _adj.Keys) {
             state[node] = 0;
         }
-
+        
         var path = new List<int>();
-        foreach (var node in _adj.Keys) {
-            if (state[node] == 0) {
-                if (!DfsVisit(node, state, path, out cycle))
-                    return false;
+        if (start.HasValue) {
+            if (!DfsVisit(start.Value, state, path, out cycle))
+                return false;
+        }
+        else {
+            foreach (var node in _adj.Keys) {
+                if (state[node] == 0) {
+                    if (!DfsVisit(node, state, path, out cycle))
+                        return false;
+                }
             }
         }
 
         return true;
+    }
+
+    public void ValidateUnique() {
+        foreach (var kvp in _adj) {
+            var u = kvp.Key;
+            var neighbors = kvp.Value;
+            var unique = new HashSet<int>(neighbors);
+            if (unique.Count != neighbors.Count) {
+                throw new Exception($"Node {u} has duplicate neighbors.");
+            }
+        }
     }
 
     /// <summary>
@@ -210,8 +231,7 @@ public class Graph {
     /// </summary>
     /// <param name="disjunctiveEdges">A list of disjunctive edge pairs.</param>
     /// <returns>The modified graph with added edges.</returns>
-    public Graph AddReversibleEdgesWithBacktracking(List<Tuple<Edge, Edge>> disjunctiveEdges) {
-        var g = Clone();
+    public bool AddReversibleEdgesWithBacktracking(List<(Edge, Edge)> disjunctiveEdges) {
 
         var index = 0;
         // This list keeps track of the edges we have successfully added for each disjunctive pair.
@@ -235,28 +255,28 @@ public class Graph {
 
             // Try the first option if not already skipped.
             if (!skippedEdges.Contains(edge1)) {
-                g.AddEdge(edge1.U, edge1.V);
-                if (g.IsAcyclic(out _)) {
+                AddEdge(edge1.U, edge1.V);
+                if (IsAcyclic(edge1.V, out _)) {
                     selectedEdges.Add(edge1);
                     index++; // Move to the next disjunctive pair.
                     added = true;
                 }
                 else {
-                    g.RemoveEdge(edge1.U, edge1.V);
+                    RemoveEdge(edge1.U, edge1.V);
                     skippedEdges.Add(edge1);
                 }
             }
 
             // If the first option didn't work, try the second.
             if (!added && !skippedEdges.Contains(edge2)) {
-                g.AddEdge(edge2.U, edge2.V);
-                if (g.IsAcyclic(out _)) {
+                AddEdge(edge2.U, edge2.V);
+                if (IsAcyclic(edge2.V, out _)) {
                     selectedEdges.Add(edge2);
                     index++; // Move to the next disjunctive pair.
                     added = true;
                 }
                 else {
-                    g.RemoveEdge(edge2.U, edge2.V);
+                    RemoveEdge(edge2.U, edge2.V);
                     skippedEdges.Add(edge2);
                 }
             }
@@ -267,17 +287,18 @@ public class Graph {
                     // Remove the last successfully added edge.
                     var lastAdded = selectedEdges[^1];
                     selectedEdges.RemoveAt(selectedEdges.Count - 1);
-                    g.RemoveEdge(lastAdded.U, lastAdded.V);
+                    RemoveEdge(lastAdded.U, lastAdded.V);
                     skippedEdges.Add(lastAdded);
                     index--; // Backtrack to the previous disjunctive pair.
                 }
                 else {
-                    throw new Exception("Cannot add edges without creating a cycle.");
+                    // throw new Exception("Cannot add edges without creating a cycle.");
+                    return false;
                 }
             }
         }
 
-        return g;
+        return true;
     }
 
     // static void Main(string[] args)
