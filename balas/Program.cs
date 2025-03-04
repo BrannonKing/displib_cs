@@ -1,5 +1,7 @@
 ﻿// See https://aka.ms/new-console-template for more information
 
+using System.Diagnostics;
+
 namespace balas;
 
 using Shared;
@@ -224,9 +226,7 @@ class Program
                 _disjunctPairs[(v1, u2)] = (v2, u1);
                 _disjunctPairs[(v2, u1)] = (v1, u2);
                 
-                _choices[(v1, u2)] = (variables.Count, false);
-                variables.Add(variable);
-                _choices[(v2, u1)] = (variables.Count, true);  // TODO: validate with choice
+                _choices[(v1, u2)] = (variables.Count, true);
                 variables.Add(variable);
             }
             
@@ -256,11 +256,20 @@ class Program
                 try {
                     var values = GetSolution(_allVariables);
                     var g = _baseGraph.Clone();
-                    foreach (var ((u, v), (index, invert)) in _choices) {
-                        if (!invert && values[index] >= 0.5)
+                    foreach (var ((u, v), (index, disjunctive)) in _choices) {
+                        if (disjunctive) {
+                            if (values[index] >= 0.5) {
+                                g.AddEdge(u, v);
+                            }
+                            else {
+                                var (farU, farV) = _disjunctPairs[(u, v)];
+                                g.AddEdge(farU, farV);
+                            }
+                                
+                        }
+                        else if (values[index] >= 0.5) {
                             g.AddEdge(u, v);
-                        else if (invert && values[index] < 0.5)
-                            g.AddEdge(u, v);
+                        }
                     }
 
                     var acyclic = g.IsAcyclic(-1, out var cycle);
@@ -268,32 +277,40 @@ class Program
                         var lazyConstraint = new GRBLinExpr(0);
                         var found = 0;
                         for (int i = 1; i < cycle.Count; i++) {
-                            if (_choices.TryGetValue((cycle[i - 1], cycle[i]), out var pair)) {
-                                var (idx, inv) = pair;
-                                if (inv)
-                                    lazyConstraint += (1 - _allVariables[idx]);
-                                else
-                                    lazyConstraint += _allVariables[idx];
+                            var (u, v) = (cycle[i - 1], cycle[i]);
+                            if (_choices.TryGetValue((u, v), out var pair)) {
+                                lazyConstraint += _allVariables[pair.Item1];
+                                found++;
+                                continue;
+                            }
+
+                            if (_disjunctPairs.TryGetValue((u, v), out var opposite)) {
+                                pair = _choices[opposite];
+                                Debug.Assert(pair.Item2);
+                                lazyConstraint += (1 - _allVariables[pair.Item1]);
                                 found++;
                             }
                         }
 
                         AddLazy(lazyConstraint <= found - 1);
-                        // Console.WriteLine("Cycled!");
+                        // Console.WriteLine($"Cycled! {found}");
+                        // if (found <= 3) {
+                        //     Console.WriteLine("  Cycle: " + string.Join(" -> ", cycle));
+                        // }
                         return;
                     }
 
-                    // Console.WriteLine("Golden! Burn it down!");
-                    // // var score = (int)Math.Round(GetDoubleInfo(GRB.Callback.MIPSOL_OBJBST));
-                    // var score = 1000000000; 
-                    // var success = BurnDown(g, score, values);
-                    // if (success) {
-                    //     SetSolution(_allVariables, values);
-                    //     var objective = UseSolution();
-                    //     if (objective < GRB.INFINITY) {
-                    //         Console.WriteLine("We found one! Objective: " + objective);
-                    //     }
-                    // }
+                    Console.WriteLine("Golden! Burn it down!");
+                    // var score = (int)Math.Round(GetDoubleInfo(GRB.Callback.MIPSOL_OBJBST));
+                    var score = 1000000000; 
+                    var success = BurnDown(g, score, values);
+                    if (success) {
+                        SetSolution(_allVariables, values);
+                        var objective = UseSolution();
+                        if (objective < GRB.INFINITY) {
+                            Console.WriteLine("We found one! Objective: " + objective);
+                        }
+                    }
                     return;
                 }
                 catch (Exception ex) {
@@ -312,46 +329,68 @@ class Program
             var nodeValues = GetNodeRel(_allVariables);
             for (var i = 0; i < _enablerChoices; i++) {
                 if (nodeValues[i] is > .25 and < 0.75) {
-                    return;
+                    return;  // require that all enablers are decided (but not all disjunctives)
                 }
             }
             
             // build a graph with the chosen paths. Then complete the disjunctions for it.
             var nodeG = _baseGraph.Clone();
-            var disjuncts = new List<(Edge, Edge)>();
-            foreach (var ((u, v), (index, invert)) in _choices) {
-                if (nodeValues[index] is <= .25 or >= 0.75) {
-                    if (!invert && nodeValues[index] >= 0.75)
+            var needDecision = new List<(Edge, Edge)>();
+            foreach (var ((u, v), (index, disjunctive)) in _choices) {
+                if (nodeValues[index] is <= .25 or >= 0.75) {  // aka, it's decided
+                    if (disjunctive) {
+                        if (nodeValues[index] <= 0.25) {
+                            var (farU, farV) = _disjunctPairs[(u, v)];
+                            nodeG.AddEdge(farU, farV);
+                        }
+                        else {
+                            nodeG.AddEdge(u, v);
+                        }
+                    }
+                    else if (nodeValues[index] >= 0.75) {
                         nodeG.AddEdge(u, v);
-                    else if (invert && nodeValues[index] <= 0.25)
-                        nodeG.AddEdge(u, v);
+                    }
                 }
-                else {
-                    var far = _disjunctPairs[(u, v)];
-                    var farEdge = new Edge(far.Item1, far.Item2);
-                    // we'll hit a choice for the far edge later, and we want to skip that one.
-                    if (nodeG.HasEdge(far.Item1, far.Item2))
-                        continue;
-                    disjuncts.Add((new Edge(u, v), farEdge));
+                else if (disjunctive) {
+                    var (farU, farV) = _disjunctPairs[(u, v)];
+                    needDecision.Add((new Edge(u, v), new Edge(farU, farV)));
                 }
             }
 
-            var noCycles = nodeG.AddReversibleEdgesWithBacktracking(disjuncts);
+            if (!nodeG.IsAcyclic(-1, out var mipCycle)) {
+                var lazyConstraint = new GRBLinExpr(0);
+                var found = 0;
+                for (int i = 1; i < mipCycle.Count; i++) {
+                    var (u, v) = (mipCycle[i - 1], mipCycle[i]);
+                    if (_choices.TryGetValue((u, v), out var pair)) {
+                        lazyConstraint += _allVariables[pair.Item1];
+                        found++;
+                        continue;
+                    }
+
+                    if (_disjunctPairs.TryGetValue((u, v), out var opposite)) {
+                        pair = _choices[opposite];
+                        Debug.Assert(pair.Item2);
+                        lazyConstraint += (1 - _allVariables[pair.Item1]);
+                        found++;
+                    }
+                }
+
+                AddCut(lazyConstraint <= found - 1);
+                return;
+            }
+
+            var noCycles = nodeG.AddReversibleEdgesWithBacktracking(needDecision);
             if (noCycles) {
                 for (int i = 0; i < nodeValues.Length; i++) {
                     nodeValues[i] = Math.Round(nodeValues[i]);
                 }
 
-                foreach (var (edge1, edge2) in disjuncts) {
-                    double one = 1.0, zero = 0.0;
-                    if (nodeG.HasEdge(edge2.U, edge2.V)) {
-                        one = 0.0;
-                        zero = 1.0;
-                    }
-                    var (index, invert) = _choices[(edge1.U, edge1.V)];
-                    nodeValues[index] = invert ? zero : one;
-                    (index, invert) = _choices[(edge2.U, edge2.V)];
-                    nodeValues[index] = invert ? one : zero;
+                foreach (var (edge1, edge2) in needDecision) {
+                    var wants2nd = nodeG.HasEdge(edge2.U, edge2.V);
+                    var (index, disj) = _choices[(edge1.U, edge1.V)];
+                    Debug.Assert(disj);
+                    nodeValues[index] = wants2nd ? 0.0 : 1.0;
                 }
                 
                 // var score = 1000000000; 
@@ -458,10 +497,17 @@ class Program
             if (swaps != null && reducedScore > 0 && reducedScore < score) {
                 Console.WriteLine($"Found better solution of {reducedScore} < {score}.");
                 foreach (var swap in swaps) {
-                    var (index, inv) = _choices[swap];
-                    values[index] = inv ? 1.0 : 0.0;
-                    (index, inv) = _choices[_disjunctPairs[swap]];
-                    values[index] = inv ? 0.0 : 1.0;
+                    // we want the disjunctive pair to swap
+                    if (_choices.TryGetValue(swap, out var choice)) {
+                        var (index, disjunctive) = choice;
+                        Debug.Assert(disjunctive);
+                        values[index] = 0.0;
+                    }
+                    else {
+                        var (index, disjunctive) = _choices[_disjunctPairs[swap]];
+                        Debug.Assert(disjunctive);
+                        values[index] = 1.0;
+                    }
                 }
                 return true;
             }
@@ -494,6 +540,7 @@ class Program
         // model.Parameters.Crossover = 0;
         model.Parameters.TimeLimit = maxTime;
         model.Parameters.LazyConstraints = 1;
+        model.Parameters.LogToConsole = verbose ? 1 : 0;
 
         var cb = new BalasCallback(problem, outerEnablers, disjunctions);
         model.SetCallback(cb);
@@ -566,8 +613,8 @@ class Program
     static void Main() {
         
         //var problemFile = "../../../../../displib_instances_testing/displib_instances_testing/displib_testinstances_headway1.json";
-        //var problemFile = "../../../../../displib_instances_phase1/line1_full_7.json";
-        var problemFile = "../../../../../displib_instances_phase1/line1_critical_6.json";
+        var problemFile = "../../../../../displib_instances_phase1/line1_full_7.json";
+        //var problemFile = "../../../../../displib_instances_phase1/line1_critical_6.json";
         var problem = Problem.LoadFromFile(problemFile);
         Console.WriteLine("Building model for " + problem.Name);
         var solution = BuildAndOptimize(problem, 1000, true);

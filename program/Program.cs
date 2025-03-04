@@ -193,7 +193,7 @@ class Program {
 
     static void Main() {
         // var problemFile = "../../../../../displib_instances_testing/displib_instances_testing/displib_testinstances_swapping2.json";
-        var problemFile = "../../../../../displib_instances_phase1/line1_critical_5.json";
+        var problemFile = "../../../../../displib_instances_phase1/line1_critical_6.json";
         var problem = Problem.LoadFromFile(problemFile);
         Console.WriteLine("Building model for " + problem.Name);
         Solution solution = BuildAndOptimize(problem, 1000, true);

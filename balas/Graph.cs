@@ -233,6 +233,12 @@ public class Graph {
     /// <returns>The modified graph with added edges.</returns>
     public bool AddReversibleEdgesWithBacktracking(List<(Edge, Edge)> disjunctiveEdges) {
 
+        var precheck = IsAcyclic(-1, out _);
+        if (!precheck) {
+            throw new Exception("It had a cycle!");
+        }
+
+        
         var index = 0;
         // This list keeps track of the edges we have successfully added for each disjunctive pair.
         var selectedEdges = new List<Edge>();
@@ -246,7 +252,7 @@ public class Graph {
             var edge2 = pair.Item2;
 
             // Greedy heuristic: try the edge with the smaller absolute difference between endpoints first.
-            if (Math.Abs(edge1.U - edge1.V) > Math.Abs(edge2.U - edge2.V)) {
+            if (Math.Abs((edge1.U & 0xffff) - (edge1.V & 0xffff)) > Math.Abs((edge2.U & 0xffff) - (edge2.V & 0xffff))) {
                 // Swap to ensure edge1 has the smaller difference.
                 (edge1, edge2) = (edge2, edge1);
             }
@@ -298,6 +304,10 @@ public class Graph {
             }
         }
 
+        var test = IsAcyclic(-1, out _);
+        if (!test) {
+            throw new Exception("It had a cycle!");
+        }
         return true;
     }
 
