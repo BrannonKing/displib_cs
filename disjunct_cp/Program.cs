@@ -122,23 +122,23 @@ class Program {
                             if (v1 >= 0 && v2 >= 0) {
                                 d1v1 = distances[t1][v1];
                                 d2u2 = distances[t2][u2];
-                                // if (d2u2 - d1v1 > 10 * durationAverage + rt1) {
-                                //     var c1 = model.Add(u2s >= v1s + rt1);
-                                //     if (oei1.Count > 0)
-                                //         c1.OnlyEnforceIf(oei1.ToArray());
-                                //     gapped++;
-                                //     continue;
-                                // }
-                                //
-                                // var d1u1 = distances[t1][u1];
-                                // var d2v2 = distances[t2][v2];
-                                // if (d1u1 - d2v2 > 10 * durationAverage + rt2a) {
-                                //     var c1 = model.Add(u1s >= v2s + rt2a);
-                                //     if (oei2.Count > 0)
-                                //         c1.OnlyEnforceIf(oei2.ToArray());
-                                //     gapped++;
-                                //     continue;
-                                // }
+                                if (d2u2 - d1v1 > 40 * durationAverage + rt1) {
+                                    // var c1 = model.Add(u2s >= v1s + rt1);
+                                    // if (oei1.Count > 0)
+                                    //     c1.OnlyEnforceIf(oei1.ToArray());
+                                    gapped++;
+                                    continue;
+                                }
+                                
+                                var d1u1 = distances[t1][u1];
+                                var d2v2 = distances[t2][v2];
+                                if (d1u1 - d2v2 > 40 * durationAverage + rt2a) {
+                                    // var c1 = model.Add(u1s >= v2s + rt2a);
+                                    // if (oei2.Count > 0)
+                                    //     c1.OnlyEnforceIf(oei2.ToArray());
+                                    gapped++;
+                                    continue;
+                                }
                             }
 
                             if (ch == null) {
@@ -231,9 +231,9 @@ class Program {
 
     static void Main() {
         // var problemFile = "../../../../../displib_instances_testing/displib_instances_testing/displib_testinstances_swapping2.json";
-        // var problemFile = "../../../../../displib_instances_phase1/line1_critical_6.json";
+        var problemFile = "../../../../../displib_instances_phase1/line1_critical_6.json";
         // var problemFile = "../../../../../displib_instances_phase1/line1_full_7.json";
-        var problemFile = "../../../../../displib_instances_phase1/line3_5.json";
+        // var problemFile = "../../../../../displib_instances_phase1/line3_5.json";
         // var problemFile = "../../../../../displib_instances_phase2/line8_large_4.json";
         // var problemFile = "../../../../../displib_instances_phase2/line3_7.json";
         var problem = Problem.LoadFromFile(problemFile);

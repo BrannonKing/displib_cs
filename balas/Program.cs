@@ -611,7 +611,9 @@ class Program
     }
 
     static void Main() {
-        
+        // this approach fails because of a faulty assumption:
+        // you can repair a failed solution by changing start times.
+        // cutting the disjunctions instead makes unnecessary changes.
         //var problemFile = "../../../../../displib_instances_testing/displib_instances_testing/displib_testinstances_headway1.json";
         var problemFile = "../../../../../displib_instances_phase1/line1_full_7.json";
         //var problemFile = "../../../../../displib_instances_phase1/line1_critical_6.json";
