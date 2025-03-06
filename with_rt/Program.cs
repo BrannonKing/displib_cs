@@ -37,7 +37,7 @@ class Program {
             for (int u = 0; u < train.Count; u++) {
                 int lb = distances[t][u];
                 int ub = train[u].StartUb < 0 ? upperBound : train[u].StartUb;
-                starts.Add(model.AddVar(lb, ub, 0, 'I', $"s_{t}_{u}"));
+                starts.Add(model.AddVar(lb, ub, 0, 'C', $"s_{t}_{u}"));
             }
             model.Update();
 
@@ -107,6 +107,13 @@ class Program {
         }
 
         var tToChains = problem.FindResourceChains();
+        
+        // we're gonna change this:
+        // 1. loop through all options and add bin variables for each combo.
+        // 2. store the gaps along with the combo in a heap.
+        // 3. so that we keep the smallest items.
+        // 4. we need a new function to generate the actual constraints.
+        
         var disjunctions =
             new Dictionary<(int, int, int, int, int, int), (int, GRBTempConstr, GRBTempConstr, string)>();
         var consToAdd = new List<(int, GRBTempConstr, GRBTempConstr, string)>();
@@ -119,11 +126,11 @@ class Program {
                 if (problem.Trains[t1][v1t].Successors.Count > 0)
                     v1succs = problem.Trains[t1][v1t].Successors;
                 var u1s = outerStarts[t1][u1];
-                var rt1a = Math.Max(1, rt1);
+                var rt1a = Math.Max(.1, rt1);
                 foreach (var (t2, u2, v2t, rt2) in chains.Skip(idx + 1)) {
                     if (t2 == t1)
                         continue;
-                    var rt2a = Math.Max(1, rt2);
+                    var rt2a = Math.Max(.1, rt2);
                     GRBVar ch = null;
                     var v2succs = new List<int> { -1 };
                     if (problem.Trains[t2][v2t].Successors.Count > 0)
@@ -181,7 +188,7 @@ class Program {
         foreach (var objective in problem.Objectives) {
             var t = objective.Train;
             var u = objective.Operation;
-            var ocv = model.AddVar(0, upperBound, 0, 'I', $"ocv_{t}_{u}");
+            var ocv = model.AddVar(0, upperBound, 0, 'C', $"ocv_{t}_{u}");
             var ocb = model.AddVar(0, 1, 0, 'B', $"ocb_{t}_{u}");
             model.AddConstr(ocv >= outerStarts[t][u] - objective.Threshold - upperBound * (1 - ocb), $"obj_{t}_{u}");
             var enables = new GRBLinExpr(0);
@@ -229,7 +236,7 @@ class Program {
             if (where == GRB.Callback.MIPSOL) {
                 try {
                     // key is res_name, value is start_time, stop_time, train, start_operation, end_operation
-                    var resourceIntervals = new Dictionary<string, List<(double, double, int, int, int)>>();
+                    var resourceIntervals = new Dictionary<string, List<(float, float, int, int, int)>>();
                     for (var t = 0; t < _problem.Trains.Count; t++) {
                         // walk through the path and note the resource intervals.
                         var starts = GetSolution(_outerStarts[t]);
@@ -240,8 +247,8 @@ class Program {
                                     GetSolution(enabler) > 0.5) {
                                     foreach (var r in _problem.Trains[t][u].Resources) {
                                         if (!resourceIntervals.ContainsKey(r.Name))
-                                            resourceIntervals[r.Name] = new List<(double, double, int, int, int)>();
-                                        resourceIntervals[r.Name].Add((starts[u], starts[v], t, u, v));
+                                            resourceIntervals[r.Name] = new List<(float, float, int, int, int)>();
+                                        resourceIntervals[r.Name].Add(((float)starts[u], (float)starts[v], t, u, v));
                                     }
 
                                     u = v;
@@ -303,15 +310,19 @@ class Program {
         } 
 
         model.Parameters.TimeLimit = maxTime - Math.Ceiling(sw.Elapsed.TotalSeconds);
-        model.Optimize();
+        try {
+            model.Optimize();
 
-        if (model.SolCount > 0) {
-            return ExtractSolution(((GRBLinExpr)model.GetObjective()).Value, problem, outerStarts, outerEnablers);
+            if (model.SolCount > 0) {
+                return ExtractSolution(((GRBLinExpr)model.GetObjective()).Value, problem, outerStarts, outerEnablers);
+            }
+        }
+        finally {
+            var env = model.GetEnv();
+            model.Dispose();
+            env.Dispose();
         }
 
-        var env = model.GetEnv();
-        model.Dispose();
-        env.Dispose();
         return null;
     }
 
@@ -354,19 +365,22 @@ class Program {
         });
         foreach (var ev in solution.Events)
             ev.Time /= 1000;
+        
+        solution.SquashTimes(problem);
         return solution;
     }
 
-    static void Main() {
+    static void Main(string[] args) {
         var sw = Stopwatch.StartNew();
         // this approach fails because of a faulty assumption:
         // you can repair a failed solution by changing start times.
         // cutting the disjunctions instead makes unnecessary changes.
         // var problemFile = "../../../../../displib_instances_testing/displib_instances_testing/displib_testinstances_headway1.json";
-        var problemFile = "../../../../../displib_instances_phase1/line1_full_7.json";
+        // var problemFile = "../../../../../displib_instances_phase1/line1_full_7.json";
+        var problemFile = "../../../../../displib_instances_phase2/line3_8.json";
         // var problemFile = "../../../../../displib_instances_phase1/line1_full_0.json";
         // var problemFile = "../../../../../displib_instances_phase1/line1_critical_3.json";
-        // var problemFile = "../../../../../displib_instances_phase2/line8_small_2.json";
+        // var problemFile = args.Length > 1 ? args[1] : "../../../../../displib_instances_phase2/line8_small_2.json";
         var problem = Problem.LoadFromFile(problemFile);
         Console.WriteLine("Building model for " + problem.Name);
         var solution = BuildAndOptimize(problem, sw, 598, true);

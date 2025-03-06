@@ -168,4 +168,103 @@ public class Solution {
         var options = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower };
         return JsonSerializer.Deserialize<Solution>(text, options)!;
     }
+
+    public static int FindScore(Problem problem, List<Event> events, bool fallback = false) {
+        var score = 0;
+
+        foreach (var objective in problem.Objectives) {
+            int t = objective.Train;
+            int op = objective.Operation;
+            var threshold = objective.Threshold;
+
+            // Filter events for the specific train and operation
+            var opEvents = events.Where(e => e.Operation == op && e.Train == t).ToList();
+
+            if (opEvents.Count == 0) {
+                if (!fallback) {
+                    continue;
+                }
+
+                // Fallback: filter events for the specific train only
+                opEvents = events.Where(e => e.Train == t).ToList();
+                if (opEvents.Count == 0) {
+                    continue;
+                }
+                threshold = 0; // Reset threshold for fallback
+            }
+
+            // Get the last event in the filtered list
+            var ev = opEvents.Last();
+
+            // Calculate score
+            score += objective.Coeff * Math.Max(0, ev.Time - threshold);
+            score += objective.Increment * (ev.Time >= threshold ? 1 : 0);
+        }
+
+        return score;
+    }
+
+    public void SquashTimes(Problem problem) {
+        var result = new List<Event>();
+        var tips = new int[problem.Trains.Count];
+        for (int i = 0; i < tips.Length; i++)
+            tips[i] = -1;
+
+        var held = new Dictionary<string, int>();
+        var releases = new Dictionary<string, (int, int)>();
+
+        foreach (var e in this.Events) {
+            int t = e.Train;
+            int u = e.Operation;
+
+            var prevTStart = 0;
+            if (tips[t] >= 0) {
+                var prevTSeg = problem.Trains[t][result[tips[t]].Operation];
+                prevTStart = result[tips[t]].Time + prevTSeg.MinDuration;
+            }
+
+            var releaseTime = 0;
+            var seg = problem.Trains[t][u];
+            foreach (var resource in seg.Resources) {
+                if (held.TryGetValue(resource.Name, out int heldTrain) && heldTrain != t) {
+                    throw new InvalidOperationException("Resource is not available!");
+                }
+
+                if (releases.TryGetValue(resource.Name, out var releaseInfo)) {
+                    var t2 = releaseInfo.Item1;
+                    var rt = releaseInfo.Item2;
+                    if (t2 != t) {
+                        releaseTime = Math.Max(releaseTime, rt);
+                    }
+                }
+            }
+
+            var prevStart = result.Count > 0 ? result[^1].Time : 0;
+            var time = Math.Max(Math.Max(prevStart, prevTStart), Math.Max(seg.StartLb, releaseTime));
+
+            if (tips[t] >= 0) {
+                var prevTSeg = problem.Trains[t][result[tips[t]].Operation];
+                foreach (var resource in prevTSeg.Resources) {
+                    held.Remove(resource.Name);
+                    if (resource.ReleaseTime > 0) {
+                        releases[resource.Name] = (t, resource.ReleaseTime + time);
+                    }
+                }
+            }
+
+            tips[t] = result.Count;
+            result.Add(new Event { Train = t, Operation = u, Time = time });
+
+            foreach (var resource in seg.Resources) {
+                held[resource.Name] = t;
+            }
+
+            releases = releases
+                .Where(kvp => kvp.Value.Item2 > time)
+                .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
+        }
+
+        this.Events = result;
+        this.ObjectiveValue = FindScore(problem, result);
+    }
 }
