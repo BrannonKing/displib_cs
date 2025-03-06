@@ -38,14 +38,16 @@ public class Objective {
 }
 
 public class Event : IComparable<Event> {
-    public int Operation { get; set; }
+    public int Operation { get; init; }
     public int Time { get; set; }
-    public int Train { get; set; }
+    public int Train { get; init; }
 
     public int CompareTo(Event other) => Time.CompareTo(other.Time);
     public override bool Equals(object obj) => obj is Event e && Train == e.Train && Operation == e.Operation;
     public override int GetHashCode() => HashCode.Combine(Train, Operation);
 }
+
+public record Chain(int Train, int Start, int Stop, int ReleaseTime);
 
 public class Problem {
     public List<List<Segment>> Trains { get; set; } = new();
@@ -75,18 +77,34 @@ public class Problem {
         }
     }
 
-    public Dictionary<string, List<(int, int, int, int)>> FindResourceChains() {
-        var result = new Dictionary<string, List<(int, int, int, int)>>();
+    public Chain FindResourceChain(int t, int v, string name) {
+        var train = Trains[t];
+        // while(train[v].Successors.Count == 1 && train[train[v].Successors[0]].Resources.Any(r => r.Name == name))
+        //     v = train[v].Successors[0]; // not working; prolly needs to check predecessors too
+        int u = FindStartOfChain(train, v, name);
+        return new Chain(t, u, v, train[v].Resources.First(x => x.Name == name).ReleaseTime);
+    }
+
+    public Dictionary<string, List<Chain>> FindResourceChains() {
+        var result = new Dictionary<string, List<Chain>>();
         for (int t = 0; t < Trains.Count; t++) {
             var train = Trains[t];
             for (int v = 0; v < train.Count; v++) {
                 foreach (var resource in train[v].Resources) {
                     int u = FindStartOfChain(train, v, resource.Name);
-                    if (!result.ContainsKey(resource.Name)) {
-                        result[resource.Name] = new List<(int, int, int, int)>();
+                    if (!result.TryGetValue(resource.Name, out var value)) {
+                        result[resource.Name] = [
+                            new Chain(t, u, v, resource.ReleaseTime)
+                        ];
+                        continue;
                     }
 
-                    result[resource.Name].Add((t, u, v, resource.ReleaseTime));
+                    var last = value[^1];
+                    if (last.Train == t && last.Start == u) {
+                        result[resource.Name][^1] = new Chain(t, u, v, resource.ReleaseTime);
+                    }
+                    else
+                        result[resource.Name].Add(new Chain(t, u, v, resource.ReleaseTime));
                 }
             }
         }
@@ -178,23 +196,11 @@ public class Solution {
             var threshold = objective.Threshold;
 
             // Filter events for the specific train and operation
-            var opEvents = events.Where(e => e.Operation == op && e.Train == t).ToList();
+            var ev = events.LastOrDefault(e => e.Operation == op && e.Train == t);
 
-            if (opEvents.Count == 0) {
-                if (!fallback) {
-                    continue;
-                }
-
-                // Fallback: filter events for the specific train only
-                opEvents = events.Where(e => e.Train == t).ToList();
-                if (opEvents.Count == 0) {
-                    continue;
-                }
-                threshold = 0; // Reset threshold for fallback
+            if (ev == null) {
+                continue;
             }
-
-            // Get the last event in the filtered list
-            var ev = opEvents.Last();
 
             // Calculate score
             score += objective.Coeff * Math.Max(0, ev.Time - threshold);
