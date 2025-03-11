@@ -17,6 +17,10 @@ public class Resource {
 
     public override bool Equals(object obj) => obj is Resource other && Name == other.Name;
     public override int GetHashCode() => Name.GetHashCode();
+
+    public override string ToString() {
+        return $"Resource: {Name} ({ReleaseTime})";
+    }
 }
 
 public class Segment {
@@ -79,8 +83,8 @@ public class Problem {
 
     public Chain FindResourceChain(int t, int v, string name) {
         var train = Trains[t];
-        // while(train[v].Successors.Count == 1 && train[train[v].Successors[0]].Resources.Any(r => r.Name == name))
-        //     v = train[v].Successors[0]; // not working; prolly needs to check predecessors too
+        while(train[v].Successors.Count == 1 && train[train[v].Successors[0]].Predecessors.Count == 1 && train[train[v].Successors[0]].Resources.Any(r => r.Name == name))
+            v = train[v].Successors[0];
         int u = FindStartOfChain(train, v, name);
         return new Chain(t, u, v, train[v].Resources.First(x => x.Name == name).ReleaseTime);
     }
