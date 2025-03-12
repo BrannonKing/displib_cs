@@ -11,7 +11,8 @@ using System;
 using System.Diagnostics;
 
 class Program {
-    private const int MaxConsToAdd = 10000;
+    private const int MaxConsToAdd = 25000;
+    private const int MaxBitsForCons = 40000;
 
     static IEnumerable<GRBTempConstr> BuildDisjuncts(Problem problem, Chain c1, Chain c2, GRBVar ch, 
         List<GRBVar[]> outerStarts, List<Dictionary<(int, int), GRBVar>> outerEnablers, double upperBound, string name) {
@@ -56,7 +57,7 @@ class Program {
     }
 
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
-    static (GRBModel model, List<GRBVar[]> outerStarts, List<Dictionary<(int, int), GRBVar>> outerEnablers, GRBVar[], int)
+    static (GRBModel model, List<GRBVar[]> outerStarts, List<Dictionary<(int, int), GRBVar>> outerEnablers, GRBVar[], int, int)
     BuildCpModel(Problem problem, int maxGap) {
         int upperBound = problem.FindUpperBound();
         var distances = problem.FindShortestPaths();
@@ -67,8 +68,7 @@ class Program {
 
         var model = new GRBModel(env);
         model.ModelName = problem.Name;
-        // model.Parameters.IntFeasTol = .47 / upperBound;
-        model.Parameters.IntegralityFocus = 1;  // or this one?
+        model.Parameters.IntFeasTol = .47 / upperBound;
         // model.Parameters.FeasibilityTol = .47 / upperBound; 
 
         var outerEnablers = new List<Dictionary<(int, int), GRBVar>>(problem.Trains.Count);
@@ -170,9 +170,6 @@ class Program {
         // 2. store the gaps along with the combo in a heap.
         // 3. so that we keep the smallest items.
         // 4. we need a new function to generate the actual constraints.
-        
-        
-
         var heap = new PriorityQueue<(Chain, Chain, string), int>();
 
         var bitsNeeded = 0;
@@ -196,7 +193,7 @@ class Program {
         }
         
         tToChains = null; // for GC
-        var bits = model.AddVars(Math.Min(MaxConsToAdd*2,bitsNeeded), 'B');
+        var bits = model.AddVars(Math.Min(MaxBitsForCons, bitsNeeded), 'B');
         var bitIndex = 0;
         while (heap.Count > 0) {
             var (ch1, ch2, name) = heap.Dequeue();
@@ -227,7 +224,7 @@ class Program {
         }
 
         model.SetObjective(objectives, GRB.MINIMIZE);
-        return (model, outerStarts, outerEnablers, bits, bitIndex);
+        return (model, outerStarts, outerEnablers, bits, bitIndex, upperBound);
     }
 
     class TimeoutCallback : GRBCallback {
@@ -261,14 +258,17 @@ class Program {
         private readonly GRBVar[] _disjunctionVars;
         private readonly Problem _problem;
         private int _disjunctIndex;
+        private double _upperBound; 
 
         public VerifyNoOverlapCallback(Problem problem, List<GRBVar[]> outerStarts,
-            List<Dictionary<(int, int), GRBVar>> enablers, GRBVar[] disjunctionVars, int disjunctIndex) {
+            List<Dictionary<(int, int), GRBVar>> enablers, GRBVar[] disjunctionVars, int disjunctIndex,
+            double upperBound) {
             _problem = problem;
             _outerStarts = outerStarts;
             _outerEnablers = enablers;
             _disjunctionVars = disjunctionVars;
             _disjunctIndex = disjunctIndex;
+            _upperBound = upperBound;
 
             Console.CancelKeyPress += (sender, e) => {
                 Console.WriteLine("Ctrl+C detected, stopping optimization...");
@@ -280,12 +280,14 @@ class Program {
         [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         protected override void Callback() {
             if (where == GRB.Callback.MIPSOL) {
+                double newUpperBound = 0;
                 try {
                     // key is res_name, value is start_time, stop_time, train, start_operation, end_operation
                     var resourceIntervals = new Dictionary<string, List<(float, float, int, int, int, int)>>();
                     for (var t = 0; t < _problem.Trains.Count; t++) {
                         // walk through the path and note the resource intervals.
                         var starts = GetSolution(_outerStarts[t]);
+                        newUpperBound = Math.Max(newUpperBound, starts[^1]);
                         var u = 0;
                         while (u + 1 < _problem.Trains[t].Count) {
                             foreach (var v in _problem.Trains[t][u].Successors) {
@@ -319,20 +321,19 @@ class Program {
                             var (x2, y2, t2, u2, v2, rt2) = pair.Value[rv];
                             // x1 <= x2 via sort
                             
-                            if (y1 + Math.Max(1, rt1) <= x2 || y2 + Math.Max(1, rt2) <= x1 || t1 == t2)
+                            if (y1 + Math.Max(0, rt1) - 1e-6 <= x2 || y2 + Math.Max(0, rt2) - 1e-6 <= x1 || t1 == t2)
                                 continue; // no overlap
                             // Console.WriteLine(
                             //     $"Needed disjunction for {pair.Key} between {t1}, {u1}, {v1} and {t2}, {u2}, {v2}");
                             var c1 = _problem.FindResourceChain(t1, u1, pair.Key);
                             var c2 = _problem.FindResourceChain(t2, u2, pair.Key);
-                            var ub = Math.Max(GetSolution(_outerStarts[t1][^1]), GetSolution(_outerStarts[t2][^1])) + 1;
-                            // ub = 10000000;
                             var idx = Interlocked.Increment(ref _disjunctIndex);
                             if (idx >= _disjunctionVars.Length) {
                                 Console.WriteLine("ERROR: Out of bits!");
                                 throw new InvalidOperationException("Need to reserve more bit vars.");
                             }
 
+                            var ub = _upperBound; // Math.Max(GetSolution(_outerStarts[t1][^1]), GetSolution(_outerStarts[t2][^1])) + 1;
                             foreach (var cons in BuildDisjuncts(_problem, c1, c2, _disjunctionVars[idx], _outerStarts,
                                          _outerEnablers, ub, pair.Key)) {
                                 addedDisjuncts++;
@@ -344,6 +345,10 @@ class Program {
                     if (addedDisjuncts > 0) {
                         Console.WriteLine($"Added {addedDisjuncts} disjuncts via callback.");
                     }
+                    else {
+                        _upperBound = newUpperBound;
+                        Console.WriteLine($"Upper Bound updated to {newUpperBound}");
+                    }
                 }
                 catch (Exception e) {
                     Console.WriteLine("Error in callback: " + e);
@@ -353,9 +358,11 @@ class Program {
     }
 
     static Solution BuildAndOptimize(Problem problem, Stopwatch sw, int maxTime, bool verbose) {
-        var (model, outerStarts, outerEnablers, disjunctionVars, disjunctIndex) = BuildCpModel(problem, -1);
+        var (model, outerStarts, outerEnablers, disjunctionVars, disjunctIndex, upperBound) = BuildCpModel(problem, -1);
         GC.Collect(); // need all the RAM we can get
         model.Parameters.Threads = 8;
+        // model.Parameters.MIPFocus = 1;
+        // model.Parameters.Heuristics = 0.1;
         // model.Parameters.Method = 1;
         // model.Parameters.ConcurrentMethod = 3; // don't run Barrier method
         model.Parameters.MemLimit = 32;
@@ -367,7 +374,7 @@ class Program {
 
         if (disjunctionVars.Length > MaxConsToAdd) {
             model.Parameters.LazyConstraints = 1;
-            var cb = new VerifyNoOverlapCallback(problem, outerStarts, outerEnablers, disjunctionVars, disjunctIndex);
+            var cb = new VerifyNoOverlapCallback(problem, outerStarts, outerEnablers, disjunctionVars, disjunctIndex, upperBound);
             model.SetCallback(cb);
         }
         else {
@@ -486,8 +493,8 @@ class Program {
         // var problemFile = args.Length > 0 ? args[0] : "../../../../../displib_instances_phase1/line3_3.json";
         // var problemFile = "../../../../../displib_instances_phase2/line3_8.json";
         // var problemFile = "../../../../../displib_instances_phase1/line1_full_0.json";
-        // var problemFile = "../../../../../displib_instances_phase1/line2_headway_6.json";
-        var problemFile = args.Length > 1 ? args[1] : "../../../../../displib_instances_phase2/line8_small_2.json";
+        // var problemFile = "../../../../../displib_instances_phase1/line2_headway_8.json";
+        var problemFile = args.Length > 1 ? args[1] : "../../../../../displib_instances_phase2/line4_large_1.json";
         var problem = Problem.LoadFromFile(problemFile);
         Console.WriteLine("Building model for " + problem.Name);
         var solution = BuildAndOptimize(problem, sw, 598, true);
