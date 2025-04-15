@@ -1,13 +1,9 @@
+using MathNet.Numerics.LinearAlgebra.Double;
 using System.Text;
-
-namespace Shared;
-
-using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+
+namespace Shared;
 
 public class Resource {
     [JsonPropertyName("resource")] public string Name { get; set; }
@@ -83,7 +79,8 @@ public class Problem {
 
     public Chain FindResourceChain(int t, int v, string name) {
         var train = Trains[t];
-        while(train[v].Successors.Count == 1 && train[train[v].Successors[0]].Predecessors.Count == 1 && train[train[v].Successors[0]].Resources.Any(r => r.Name == name))
+        while (train[v].Successors.Count == 1 && train[train[v].Successors[0]].Predecessors.Count == 1 &&
+               train[train[v].Successors[0]].Resources.Any(r => r.Name == name))
             v = train[v].Successors[0];
         int u = FindStartOfChain(train, v, name);
         return new Chain(t, u, v, train[v].Resources.First(x => x.Name == name).ReleaseTime);
@@ -170,6 +167,167 @@ public class Problem {
 
         return dists;
     }
+
+    private const double NegInf = -1e10;
+
+    /// <summary>
+    /// Computes the Max-Plus product of two matrices A and B.
+    /// </summary>
+    /// <param name="A">First input matrix</param>
+    /// <param name="B">Second input matrix</param>
+    /// <returns>The Max-Plus product matrix</returns>
+    public static SparseMatrix MaxPlusMultiply(SparseMatrix A, SparseMatrix B) {
+        int n = A.RowCount;
+        if (A.ColumnCount != B.RowCount || A.RowCount != B.ColumnCount)
+            throw new ArgumentException("Matrix dimensions must be compatible for multiplication");
+
+        // Initialize result as a sparse matrix (unstored elements are 0, interpreted as -∞)
+        var C = SparseMatrix.Create(n, n, 0.0);
+
+        // Dictionary to accumulate maximum values before setting in sparse matrix
+        var maxValues = new Dictionary<(int i, int j), double>();
+
+        // Iterate over non-zero elements in A
+        foreach (var (i, k, a_ik) in A.Storage.EnumerateNonZeroIndexed())
+        {
+            // Iterate over non-zero elements in B for column k
+            foreach (var (k2, j, b_kj) in B.Storage.EnumerateNonZeroIndexed())
+            {
+                if (k2 != k || b_kj <= 0) continue; // Match k and skip -∞
+
+                double sum = a_ik + b_kj;
+                if (sum <= 0) continue; // Skip if sum is -∞
+
+                var key = (i, j);
+                if (maxValues.TryGetValue(key, out double currentMax))
+                {
+                    maxValues[key] = Math.Max(currentMax, sum);
+                }
+                else
+                {
+                    maxValues[key] = sum;
+                }
+            }
+        }
+
+        // Set the computed maximums in the sparse matrix
+        foreach (var kvp in maxValues)
+        {
+            C.At(kvp.Key.i, kvp.Key.j, kvp.Value);
+        }
+
+        return C;
+    }
+
+    /// <summary>
+    /// Computes A to the power of k under Max-Plus algebra using binary exponentiation.
+    /// </summary>
+    /// <param name="A">Base matrix</param>
+    /// <param name="k">Non-negative exponent</param>
+    /// <returns>The matrix A raised to the power k in Max-Plus algebra</returns>
+    public static SparseMatrix MaxPlusPower(SparseMatrix A, int k) {
+        int n = A.RowCount;
+        var result = SparseMatrix.Create(n, n, NegInf);
+        for (var i = 0; i < n; ++i)
+            result.At(i, i, 0.0);
+        
+        var baseMatrix = A;
+        while (k > 0) {
+            Console.WriteLine("Start: " + k);
+            if (k % 2 == 1) {
+                result = MaxPlusMultiply(result, baseMatrix);
+            }
+
+            baseMatrix = MaxPlusMultiply(baseMatrix, baseMatrix);
+            k /= 2;
+        }
+
+        return result;
+    }
+    
+    public SparseMatrix BuildGraph(int minRt = 1)
+    {
+        // Number of segments
+        var n = Trains.Sum(t => t.Count);
+
+        // Mapping from segment index to (train index, segment index within train)
+        var segToTu = new List<(int t, int u)>();
+        for (var t = 0; t < Trains.Count; t++)
+        {
+            var train = Trains[t];
+            for (var u = 0; u < train.Count; u++)
+            {
+                segToTu.Add((t, u));
+            }
+        }
+
+        // Reverse mapping from (t, u) to segment index
+        var tuToSeg = segToTu.Select((tup, i) => new { tup, i })
+                             .ToDictionary(x => x.tup, x => x.i);
+
+        // Initialize adjacency matrix with zeros
+        var A = new SparseMatrix(n, n);
+
+        // Add edges for train segments
+        for (int t = 0; t < Trains.Count; t++)
+        {
+            var train = Trains[t];
+            for (int u = 0; u < train.Count; u++)
+            {
+                var segment = train[u];
+                int useg = tuToSeg[(t, u)];
+                foreach (int v in segment.Successors)
+                {
+                    int vseg = tuToSeg[(t, v)];
+                    A[useg, vseg] = segment.MinDuration;
+                }
+            }
+        }
+
+        // Add edges for resource constraints
+        var tToChains = FindResourceChains();
+        Console.WriteLine($"   Found {tToChains.Count} separate resources");
+
+        foreach (var pair in tToChains)
+        {
+            string name = pair.Key;
+            var chains = pair.Value;
+            for (int i = 0; i < chains.Count; i++)
+            {
+                var (t1, u1, v1t, rt1) = chains[i];
+                for (int j = i + 1; j < chains.Count; j++)
+                {
+                    var (t2, u2, v2t, rt2) = chains[j];
+                    if (t1 == t2)
+                    {
+                        continue;
+                    }
+
+                    var v1Succs = Trains[t1][v1t].Successors;
+                    var v2Succs = Trains[t2][v2t].Successors;
+                    int u1seg = tuToSeg[(t1, u1)];
+                    int u2seg = tuToSeg[(t2, u2)];
+
+                    // Edges from v1's successors to u2
+                    foreach (int v1 in v1Succs)
+                    {
+                        int v1seg = tuToSeg[(t1, v1)];
+                        A[v1seg, u2seg] = Math.Max(A[v1seg, u2seg], Math.Max(minRt, rt1));
+                    }
+
+                    // Edges from v2's successors to u1
+                    foreach (int v2 in v2Succs)
+                    {
+                        int v2seg = tuToSeg[(t2, v2)];
+                        A[v2seg, u1seg] = Math.Max(A[v2seg, u1seg], Math.Max(minRt, rt2));
+                    }
+                }
+            }
+        }
+
+        return A;
+    }
+
 }
 
 public class Solution {

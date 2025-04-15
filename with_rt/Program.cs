@@ -99,7 +99,7 @@ class Program {
 
                     if (needsEnablers >= 0) {
                         var enabler = model.AddVar(0, 1, 0, 'B', $"b_{u}_{v}");
-                        // enabler.BranchPriority = 100;
+                        enabler.BranchPriority = 100;
                         outerEnablers[t][(u, v)] = enabler;
                         // if we have a nonzero lower bound, we can't allow that to push all our successors up.
                         // we either go with all zero LB, which seems worse, or we go with big-M here.
@@ -354,6 +354,77 @@ class Program {
                     Console.WriteLine("Error in callback: " + e);
                 }
             }
+            else if (where == GRB.Callback.MIPNODE && GetIntInfo(GRB.Callback.MIPNODE_STATUS) == GRB.Status.OPTIMAL) {
+
+                // chance to try to find a greedy solution:
+                if (Random.Shared.NextSingle() < 0.8) {
+                    return;
+                }
+
+                for (var t = 0; t < _problem.Trains.Count; t++) {
+                    var enablers = GetSolution(_outerEnablers[t].Values.ToArray());
+                    foreach (var enable in enablers) {
+                        if (enable is > .25 and < 0.75) {
+                            return;  // require that all enablers are decided (but not all disjunctives)
+                        }
+                    }
+                }
+            
+                // build a graph with the chosen paths. Then complete the disjunctions for it.
+                var nodeG = _baseGraph.Clone();
+                var needDecision = new List<(Edge, Edge)>();
+                foreach (var ((u, v), (index, disjunctive)) in _choices) {
+                    if (nodeValues[index] is <= .25 or >= 0.75) {  // aka, it's decided
+                        if (disjunctive) {
+                            if (nodeValues[index] <= 0.25) {
+                                var (farU, farV) = _disjunctPairs[(u, v)];
+                                nodeG.AddEdge(farU, farV);
+                            }
+                            else {
+                                nodeG.AddEdge(u, v);
+                            }
+                        }
+                        else if (nodeValues[index] >= 0.75) {
+                            nodeG.AddEdge(u, v);
+                        }
+                    }
+                    else if (disjunctive) {
+                        var (farU, farV) = _disjunctPairs[(u, v)];
+                        needDecision.Add((new Edge(u, v), new Edge(farU, farV)));
+                    }
+                }
+
+                var noCycles = nodeG.AddReversibleEdgesWithBacktracking(needDecision);
+                if (noCycles) {
+                    for (int i = 0; i < nodeValues.Length; i++) {
+                        nodeValues[i] = Math.Round(nodeValues[i]);
+                    }
+
+                    foreach (var (edge1, edge2) in needDecision) {
+                        var wants2nd = nodeG.HasEdge(edge2.U, edge2.V);
+                        var (index, disj) = _choices[(edge1.U, edge1.V)];
+                        Debug.Assert(disj);
+                        nodeValues[index] = wants2nd ? 0.0 : 1.0;
+                    }
+                
+                    // var score = 1000000000; 
+                    // var success = BurnDown(nodeG, score, nodeValues);
+                    // if (success) {
+                    //     SetSolution(_allVariables, nodeValues);
+                    //     var objective2 = UseSolution();
+                    //     if (objective2 < GRB.INFINITY) {
+                    //         Console.WriteLine("We found one burnt! Objective: " + objective2);
+                    //     }
+                    // }
+                
+                    SetSolution(_allVariables, nodeValues);
+                    var objective = UseSolution();
+                    if (objective < GRB.INFINITY) {
+                        Console.WriteLine("We found one on a MIP node! Objective: " + objective);
+                    }
+                }
+
+            }
         }
     }
 
@@ -456,52 +527,30 @@ class Program {
         }
     }
     
-    // static void InsertionSort(List<Event> events) {
-    //     for (int i = 0; i < events.Count - 1; i++) {
-    //         var j = i+1;
-    //         while (j > 0) {
-    //             var a = events[j - 1];
-    //             var b = events[j];
-    //
-    //             if (a.Time > b.Time) {
-    //                 (events[j], events[j - 1]) = (events[j - 1], events[j]);
-    //                 j--;
-    //             }
-    //             else if (a.Time == b.Time) {
-    //                 if (a.Train == b.Train && a.Operation > b.Operation) {
-    //                     (events[j], events[j - 1]) = (events[j - 1], events[j]);
-    //                     j--;
-    //                 }
-    //                 else {
-    //                     break;
-    //                 }
-    //             }
-    //             else {
-    //                 break; // If a.Time <= b.Time, the events are in the correct order, break.
-    //             }
-    //         }
-    //     }
-    // }
-
     static void Main(string[] args) {
         var sw = Stopwatch.StartNew();
         // this approach fails because of a faulty assumption:
         // you can repair a failed solution by changing start times.
         // cutting the disjunctions instead makes unnecessary changes.
-        // var problemFile = "../../../../../displib_instances_testing/displib_instances_testing/displib_testinstances_headway1.json";
-        // var problemFile = "../../../../../displib_instances_phase1/line1_full_7.json";
+        // var problemFile = "../../../../../displib_instances_testing/displib_instances_testing/displib_testinstances_swapping2.json";
+        var problemFile = "../../../../../displib_instances_phase1/line1_critical_9.json";
         // var problemFile = args.Length > 0 ? args[0] : "../../../../../displib_instances_phase1/line3_3.json";
         // var problemFile = "../../../../../displib_instances_phase2/line3_8.json";
         // var problemFile = "../../../../../displib_instances_phase1/line1_full_0.json";
         // var problemFile = "../../../../../displib_instances_phase1/line2_headway_8.json";
-        var problemFile = args.Length > 1 ? args[1] : "../../../../../displib_instances_phase2/line4_large_1.json";
+        // var problemFile = args.Length > 1 ? args[1] : "../../../../../displib_instances_phase2/line4_large_1.json";
         var problem = Problem.LoadFromFile(problemFile);
         Console.WriteLine("Building model for " + problem.Name);
-        var solution = BuildAndOptimize(problem, sw, 598, true);
-        if (solution != null) {
-            var resultFile = $"results/{problem.Name}_solution.json";
-            solution.WriteToFile(resultFile);
-            Console.WriteLine("Solution found with objective: " + solution.ObjectiveValue);
-        }
+
+        var A = problem.BuildGraph();
+        var B = Problem.MaxPlusPower(A, A.ColumnCount - 1);
+        Console.WriteLine("MaxPlusPower: " + B.Storage.Enumerate().Max());
+
+        // var solution = BuildAndOptimize(problem, sw, 598, true);
+        // if (solution != null) {
+        //     var resultFile = $"results/{problem.Name}_solution.json";
+        //     solution.WriteToFile(resultFile);
+        //     Console.WriteLine("Solution found with objective: " + solution.ObjectiveValue);
+        // }
     }
 }

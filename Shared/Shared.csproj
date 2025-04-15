@@ -6,4 +6,8 @@
         <Nullable>disable</Nullable>
     </PropertyGroup>
 
+    <ItemGroup>
+      <PackageReference Include="MathNet.Numerics" Version="6.0.0-beta2" />
+    </ItemGroup>
+
 </Project>
