@@ -11,7 +11,7 @@ using System;
 using System.Diagnostics;
 
 class Program {
-    private const int MaxConsToAdd = 20000;
+    private const int MaxConsToAdd = 5000;
 
     static IEnumerable<GRBTempConstr> BuildDisjuncts(Problem problem, Chain c1, Chain c2, GRBVar ch, 
         List<GRBVar[]> outerStarts, List<Dictionary<(int, int), GRBVar>> outerEnablers, int upperBound) {
@@ -20,10 +20,10 @@ class Program {
         if (problem.Trains[t1][v1t].Successors.Count > 0)
             v1succs = problem.Trains[t1][v1t].Successors;
         var u1s = outerStarts[t1][u1];
-        var rt1a = Math.Max(.1, rt1);
+        var rt1a = Math.Max(1, rt1);
 
         var (t2, u2, v2t, rt2) = c2;
-        var rt2a = Math.Max(.1, rt2);
+        var rt2a = Math.Max(1, rt2);
         var v2succs = new List<int> { -1 };
         if (problem.Trains[t2][v2t].Successors.Count > 0)
             v2succs = problem.Trains[t2][v2t].Successors;
@@ -64,8 +64,8 @@ class Program {
 
         var model = new GRBModel(env);
         model.ModelName = problem.Name;
-        model.Parameters.IntFeasTol = 1.0 / (upperBound + 2.0);
-        model.Parameters.IntegralityFocus = 1;
+        model.Parameters.IntFeasTol = .47 / upperBound;
+        // model.Parameters.IntegralityFocus = 1;
 
         var outerEnablers = new List<Dictionary<(int, int), GRBVar>>(problem.Trains.Count);
         var outerStarts = new List<GRBVar[]>(problem.Trains.Count);
@@ -76,7 +76,7 @@ class Program {
             for (int u = 0; u < train.Count; u++) {
                 int lb = distances[t][u];
                 int ub = train[u].StartUb < 0 ? upperBound : train[u].StartUb;
-                starts[u] = model.AddVar(lb, ub, 0, 'C', $"s_{t}_{u}");
+                starts[u] = model.AddVar(lb, ub, 0, 'I', $"s_{t}_{u}");
                 // starts[u].Start = distances[t][u];
             }
             model.Update();
@@ -90,19 +90,23 @@ class Program {
                     needsEnablers = u;
                 }
 
+                var reuse = train[u].Predecessors.Count == 1 && train[u].Successors.Count == 1 &&
+                            outerEnablers[t].ContainsKey((train[u].Predecessors[0], u));
+                // var reuse = false;
                 foreach (var v in train[u].Successors) {
                     int md = train[u].MinDuration;
 
                     if (needsEnablers >= 0) {
-                        var enabler = model.AddVar(0, 1, 0, 'B', $"b_{u}_{v}");
+                        // the enablers go with the edges; however, we want to reuse them if possible.
+                        var enabler = reuse? outerEnablers[t][(train[u].Predecessors[0], u)] : model.AddVar(0, 1, 0, 'B', $"b_{u}_{v}");
                         // enabler.BranchPriority = 100;
                         outerEnablers[t][(u, v)] = enabler;
                         // if we have a nonzero lower bound, we can't allow that to push all our successors up.
                         // we either go with all zero LB, which seems worse, or we go with big-M here.
                         // but I keep having numerical issues with big-M here.
                         // I can set the IntFeasTol, but I still hit a few issues with it.
-                        // model.AddConstr(starts[v] >= starts[u] + md * enabler - (1 - enabler) * starts[u].LB, $"aft_{t}_{u}_{v}");
-                        model.AddGenConstrIndicator(enabler, 1, starts[v] >= starts[u] + md, $"aft_{t}_{u}_{v}");
+                        model.AddConstr(starts[v] >= starts[u] + md * enabler - (1 - enabler) * starts[u].LB, $"aft_{t}_{u}_{v}");
+                        // model.AddGenConstrIndicator(enabler, 1, starts[v] >= starts[u] + md, $"aft_{t}_{u}_{v}");
                     }
                     else {
                         model.AddConstr(starts[v] >= starts[u] + md, $"aft_{t}_{u}_{v}");
@@ -173,6 +177,32 @@ class Program {
                         continue;
                     var dis1 = distances[ch1.Train][ch1.Start];
                     var dis2 = distances[ch2.Train][ch2.Start];
+                    // var no1to2 = dis1 > 0 && problem.Trains[ch2.Train][ch2.Start].StartUb == 0;
+                    // var no2to1 = dis2 > 0 && problem.Trains[ch1.Train][ch1.Start].StartUb == 0;
+                    // if (no1to2 && no2to1) {
+                    //     continue;
+                    // }
+                    //
+                    // if (no1to2) {
+                    //     // successors of 2 must happen before 1 can start
+                    //     var rt2 = Math.Max(.1, ch2.ReleaseTime);
+                    //     foreach (var v2 in problem.Trains[ch2.Train][ch2.Stop].Successors) {
+                    //         model.AddConstr(
+                    //             outerStarts[ch1.Train][ch1.Start] >= outerStarts[ch2.Train][v2] + rt2, $"aft_{ch1.Train}_{ch1.Start}_{ch2.Train}_{v2}");
+                    //     }
+                    //     continue;
+                    // }
+                    //
+                    // if (no2to1) {
+                    //     // successors of 1 must happen before 2 can start
+                    //     var rt1 = Math.Max(.1, ch1.ReleaseTime);
+                    //     foreach (var v1 in problem.Trains[ch1.Train][ch1.Stop].Successors) {
+                    //         model.AddConstr(
+                    //             outerStarts[ch2.Train][ch2.Start] >= outerStarts[ch1.Train][v1] + rt1, $"aft_{ch2.Train}_{ch2.Start}_{ch1.Train}_{v1}");
+                    //     }
+                    //     continue;
+                    // }
+
                     heap.Enqueue((ch1, ch2), -Math.Abs(dis1 - dis2));
                     bitsNeeded++;
                 }
@@ -184,7 +214,7 @@ class Program {
         }
         
         tToChains = null; // for GC
-        var bits = model.AddVars(bitsNeeded, 'B');
+        var bits = model.AddVars(Math.Min(MaxConsToAdd + 5000, bitsNeeded), 'B');
         var bitIndex = 0;
         while (heap.Count > 0) {
             var (ch1, ch2) = heap.Dequeue();
@@ -196,10 +226,12 @@ class Program {
         Console.WriteLine($"Added up to {MaxConsToAdd} of {bitsNeeded} disjunctions.");
 
         var objectives = new GRBLinExpr(0);
-        foreach (var objective in problem.Objectives) {
+        // var selection = new Random(42).GetItems(problem.Objectives.ToArray(), problem.Objectives.Count / 3);
+        var selection = problem.Objectives;
+        foreach (var objective in selection) {
             var t = objective.Train;
             var u = objective.Operation;
-            var ocv = model.AddVar(0, upperBound, 0, 'C', $"ocv_{t}_{u}");
+            var ocv = model.AddVar(0, upperBound, 0, 'I', $"ocv_{t}_{u}");
             var ocb = model.AddVar(0, 1, 0, 'B', $"ocb_{t}_{u}");
             model.AddConstr(ocv >= outerStarts[t][u] - objective.Threshold - upperBound * (1 - ocb), $"obj_{t}_{u}");
             var enables = new GRBLinExpr(0);
@@ -293,6 +325,7 @@ class Program {
                     }
 
                     var addedDisjuncts = 0;
+                    var usedDisjunctVars = 0;
                     // sort the resource intervals, then check them for overlap.
                     foreach (var pair in resourceIntervals) {
                         pair.Value.Sort((a, b) => {
@@ -313,6 +346,11 @@ class Program {
                             var c2 = _problem.FindResourceChain(t2, u2, pair.Key);
                             var ub = (int)Math.Max(GetSolution(_outerStarts[t1][^1]), GetSolution(_outerStarts[t2][^1])) + 2;
                             var idx = Interlocked.Increment(ref _disjunctIndex);
+                            if (idx >= _disjunctionVars.Length) {
+                                throw new InvalidOperationException("Need more disjunction variables.");
+                            }
+
+                            usedDisjunctVars++;
 
                             foreach (var cons in BuildDisjuncts(_problem, c1, c2, _disjunctionVars[idx], _outerStarts,
                                          _outerEnablers, ub)) {
@@ -323,7 +361,7 @@ class Program {
                     }
 
                     if (addedDisjuncts > 0) {
-                        Console.WriteLine($"Added {addedDisjuncts} disjuncts via callback.");
+                        Console.WriteLine($"Added {addedDisjuncts} disjuncts via callback. Used vars: {usedDisjunctVars} ({_disjunctIndex} / {_disjunctionVars.Length}).");
                     }
                 }
                 catch (Exception e) {
@@ -344,6 +382,8 @@ class Program {
         // model.Parameters.Crossover = 1;
         // model.Parameters.Method = 1;
         // model.Parameters.Crossover = 0;
+        // model.Parameters.NodeMethod = 1;
+        model.Parameters.Heuristics = 0.12;
         model.Parameters.LogToConsole = verbose ? 1 : 0;
 
         if (disjunctionVars.Length > MaxConsToAdd) {
@@ -396,21 +436,54 @@ class Program {
                         continue;
                 }
 
-                var value = (int)Math.Floor((outerStarts[t][u].X + 1e-5) * 1000);
+                var value = (int)Math.Floor((outerStarts[t][u].X + 1e-5));
                 solution.Events.Add(new Event { Operation = u, Time = value, Train = t });
             }
         }
 
-        solution.Events.Sort((a, b) => {
-            if (a.Train == b.Train)  // numeric issues still kill this, so trying to handle a few of those here.
-                return a.Operation.CompareTo(b.Operation);
-            
-            return a.Time.CompareTo(b.Time);
-        });
-        foreach (var ev in solution.Events)
-            ev.Time /= 1000;
+        // solution.Events.Sort((a, b) => outerStarts[a.Train][a.Operation].X.CompareTo(outerStarts[b.Train][b.Operation].X));
+        // solution.Events.Sort((a, b) => {
+        //     if (a.Train == b.Train)  // numeric issues still kill this, so trying to handle a few of those here.
+        //         return a.Operation.CompareTo(b.Operation);
+        //     
+        //     return a.Time.CompareTo(b.Time);
+        // });
         
-        solution.SquashTimes(problem);
+        // Bubble sort implementation with O(n²) complexity
+        for (int i = 0; i < solution.Events.Count - 1; i++) {
+            for (int j = 0; j < solution.Events.Count - i - 1; j++) {
+                var a = solution.Events[j];
+                var b = solution.Events[j + 1];
+        
+                bool shouldSwap = false;
+                // if (a.Train == b.Train) {
+                //     shouldSwap = a.Operation > b.Operation;
+                // } else 
+                if (a.Time == b.Time) {
+                    // if b releases a resource that a needs, it has to go before it.
+                    // find the previous event that was on b.Train:
+                    for (int k = j - 1; k >= 0; k--) {
+                        if (solution.Events[k].Train == b.Train) {
+                            var kop = solution.Events[k].Operation;
+                            // check for intersection of resources:
+                            shouldSwap = problem.Trains[a.Train][a.Operation].Resources
+                                .Any(r => problem.Trains[b.Train][kop].Resources.Contains(r));
+                            break;
+                        }
+                    }
+                }
+                else {
+                    shouldSwap = a.Time > b.Time;
+                }
+        
+                if (shouldSwap) {
+                    // Swap elements
+                    (solution.Events[j], solution.Events[j + 1]) = (solution.Events[j + 1], solution.Events[j]);
+                }
+            }
+        }
+        
+        // solution.SquashTimes(problem);
         return solution;
     }
 
@@ -421,11 +494,12 @@ class Program {
         // cutting the disjunctions instead makes unnecessary changes.
         // var problemFile = "../../../../../displib_instances_testing/displib_instances_testing/displib_testinstances_headway1.json";
         // var problemFile = "../../../../../displib_instances_phase1/line1_full_7.json";
-        var problemFile = args.Length > 0 ? args[0] : "../../../../../displib_instances_phase1/line1_full_2.json";
+        // var problemFile = args.Length > 0 ? args[0] : "../../../../../displib_instances_phase1/line1_full_7.json";
         // var problemFile = "../../../../../displib_instances_phase2/line3_8.json";
         // var problemFile = "../../../../../displib_instances_phase1/line1_full_0.json";
         // var problemFile = "../../../../../displib_instances_phase1/line1_critical_3.json";
         // var problemFile = args.Length > 1 ? args[1] : "../../../../../displib_instances_phase2/line8_small_2.json";
+        var problemFile = args.Length > 1 ? args[1] : "../../../../../displib_instances_phase2/line4_large_6.json";
         var problem = Problem.LoadFromFile(problemFile);
         Console.WriteLine("Building model for " + problem.Name);
         var solution = BuildAndOptimize(problem, sw, 598, true);
