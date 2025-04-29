@@ -89,9 +89,11 @@ public class Problem {
         return new Chain(t, u, v, train[v].Resources.First(x => x.Name == name).ReleaseTime);
     }
 
-    public Dictionary<string, List<Chain>> FindResourceChains() {
+    public Dictionary<string, List<Chain>> FindResourceChains(IReadOnlySet<int> mask) {
         var result = new Dictionary<string, List<Chain>>();
         for (int t = 0; t < Trains.Count; t++) {
+            if (mask.Contains(t))
+                continue;
             var train = Trains[t];
             for (int v = 0; v < train.Count; v++) {
                 foreach (var resource in train[v].Resources) {
@@ -129,9 +131,11 @@ public class Problem {
         return v;
     }
 
-    public int FindUpperBound() {
+    public int FindUpperBound(IReadOnlySet<int> mask) {
         var result = 0;
         for (int t = 0; t < Trains.Count; t++) {
+            if (mask.Contains(t))
+                continue;
             var ub = 0;
             for (int u = 0; u < Trains[t].Count; u++) {
                 var segment = Trains[t][u];
