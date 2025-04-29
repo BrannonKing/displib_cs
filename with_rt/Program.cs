@@ -12,17 +12,17 @@ using System.Diagnostics;
 
 class Program {
     private const int MaxConsToAdd = 5000;
-    private const int MaxAdditions = 15000;
+    private const int MaxAdditions = 5000;
 
     static IEnumerable<GRBTempConstr> BuildDisjuncts(Problem problem, Chain c1, Chain c2, GRBVar ch, 
         Dictionary<int, GRBVar[]> outerStarts, Dictionary<int, Dictionary<(int, int), GRBVar>> outerEnablers, int upperBound) {
         var (t1, u1, v1t, rt1) = c1;
         var v1succs = problem.Trains[t1][v1t].Successors;
         var u1s = outerStarts[t1][u1];
-        var rt1a = Math.Max(0.1, rt1);
+        var rt1a = Math.Max(1, rt1);
 
         var (t2, u2, v2t, rt2) = c2;
-        var rt2a = Math.Max(0.1, rt2);
+        var rt2a = Math.Max(1, rt2);
         var v2succs = problem.Trains[t2][v2t].Successors;
         var u2s = outerStarts[t2][u2];
 
@@ -73,7 +73,7 @@ class Program {
             for (int u = 0; u < train.Count; u++) {
                 int lb = distances[t][u];
                 int ub = train[u].StartUb < 0 ? upperBound : train[u].StartUb;
-                starts[u] = model.AddVar(lb, ub, 0, 'C', $"s_{t}_{u}");
+                starts[u] = model.AddVar(lb, ub, 0, 'I', $"s_{t}_{u}");
                 // starts[u].Start = distances[t][u];
             }
             model.Update();
@@ -200,7 +200,7 @@ class Program {
             if (mask.Contains(t))
                 continue;
             var u = objective.Operation;
-            var ocv = model.AddVar(0, upperBound, 0, 'C', $"ocv_{t}_{u}");
+            var ocv = model.AddVar(0, upperBound, 0, 'I', $"ocv_{t}_{u}");
             var ocb = model.AddVar(0, 1, 0, 'B', $"ocb_{t}_{u}");
             model.AddConstr(ocv >= outerStarts[t][u] - objective.Threshold - upperBound * (1 - ocb), $"obj_{t}_{u}");
             var enables = new GRBLinExpr(0);
@@ -427,8 +427,8 @@ class Program {
 
     private static int CompareEvents(Event a, Event b, Digraph<(int Train, int Operation)> graph) {
         // 1) if same train, fallback to operation compare
-        if (a.Train == b.Train)
-            return a.Operation.CompareTo(b.Operation);
+        // if (a.Train == b.Train)
+        //     return a.Operation.CompareTo(b.Operation);
 
         // 2) otherwise compare times
         int tc = a.Time.CompareTo(b.Time);
@@ -529,7 +529,7 @@ class Program {
         graph.ComputeTransitiveClosureInPlace();
         SortEvents(solution.Events, graph); // need an O(n^2) sort to compare all elements against all others
         
-        // solution.SquashTimes(problem);
+        solution.SquashTimes(problem);
         return solution;
     }
 
@@ -540,12 +540,12 @@ class Program {
         // cutting the disjunctions instead makes unnecessary changes.
         // var problemFile = "../../../../../displib_instances_testing/displib_instances_testing/displib_testinstances_headway1.json";
         // var problemFile = "../../../../../displib_instances_phase1/line1_full_7.json";
-        // var problemFile = args.Length > 0 ? args[0] : "../../../../../displib_instances_phase1/line1_full_7.json";
+        var problemFile = args.Length > 0 ? args[0] : "../../../../../displib_instances_phase1/line1_full_4.json";
         // var problemFile = "../../../../../displib_instances_phase2/line3_8.json";
-        var problemFile = "../../../../../displib_instances_phase1/line3_5.json";
+        // var problemFile = "../../../../../displib_instances_phase1/line3_5.json";
         // var problemFile = "../../../../../displib_instances_phase1/line2_headway_3.json";
-        // var problemFile = args.Length > 1 ? args[1] : "../../../../../displib_instances_phase2/line8_small_2.json";
-        //var problemFile = args.Length > 1 ? args[1] : "../../../../../displib_instances_phase2/line4_large_6.json";
+        // var problemFile = args.Length > 0 ? args[0] : "../../../../../displib_instances_phase2/line8_small_2.json";
+        // var problemFile = args.Length > 0 ? args[0] : "../../../../../displib_instances_phase2/line4_large_6.json";
         var problem = Problem.LoadFromFile(problemFile);
         Console.WriteLine("Building model for " + problem.Name + ". Trains: " + problem.Trains.Count);
         var solution = BuildAndOptimize(problem, sw, 598, true);
@@ -553,6 +553,7 @@ class Program {
             var resultFile = $"results/{problem.Name}_solution.json";
             solution.WriteToFile(resultFile);
             Console.WriteLine("Solution found with objective: " + solution.ObjectiveValue);
+            Console.WriteLine("Wrote solution to " + resultFile);
         }
     }
 }
