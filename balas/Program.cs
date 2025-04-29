@@ -14,7 +14,7 @@ class Program
     static (GRBModel model, List<List<GRBVar>> outerStarts, List<Dictionary<(int, int), GRBVar>> outerEnablers, Dictionary<(int, int, int, int), GRBVar>) 
         BuildCpModel(Problem problem, int maxGap)
     {
-        int upperBound = problem.FindUpperBound();
+        int upperBound = problem.FindUpperBound(new HashSet<int>());
         var distances = problem.FindShortestPaths();
 
         var env = new GRBEnv();
@@ -112,16 +112,14 @@ class Program
             }
         }
 
-        var tToChains = problem.FindResourceChains();
+        var tToChains = problem.FindResourceChains(new HashSet<int>());
         var disjunctions = new Dictionary<(int, int, int, int), GRBVar>();
         foreach (var chains in tToChains.Values)
         {
             for (int idx = 0; idx < chains.Count; idx++)
             {
                 var (t1, u1, v1t, rt1) = chains[idx];
-                var v1succs = new List<int>{-1};
-                if (problem.Trains[t1][v1t].Successors.Count > 0)
-                    v1succs = problem.Trains[t1][v1t].Successors;
+                var v1succs = problem.Trains[t1][v1t].Successors;
                 var u1s = outerStarts[t1][u1];
                 foreach (var (t2, u2, v2t, rt2) in chains.Skip(idx + 1))
                 {

@@ -7,7 +7,7 @@ using TqdmSharp;
 class Program {
     static (CpModel model, List<List<IntVar>> outerStarts, List<Dictionary<(int, int), LinearExpr>> outerEnablers)
         BuildCpModel(Problem problem, int maxGap) {
-        int upperBound = problem.FindUpperBound();
+        int upperBound = problem.FindUpperBound(new HashSet<int>());
         var distances = problem.FindShortestPaths();
 
         var model = new CpModel();
@@ -77,82 +77,63 @@ class Program {
         }
         var durationAverage = durationSum / durationsAdded;
 
-        var tToChains = problem.FindResourceChains();
+        var tToChains = problem.FindResourceChains(new HashSet<int>());
         var disjunctions = 0;
         var gapped = 0;
         foreach (var chains in Tqdm.Wrap(tToChains.Values)) {
             for (int idx = 0; idx < chains.Count; idx++) {
                 var (t1, u1, v1t, rt1) = chains[idx];
-                var v1succs = new List<int> { -1 };
-                if (problem.Trains[t1][v1t].Successors.Count > 0)
-                    v1succs = problem.Trains[t1][v1t].Successors;
+                // if v1t has no successors then it can never release the resource, so the other must come first.
+                // same for v2t
+                var v1succs = problem.Trains[t1][v1t].Successors;
                 var u1s = outerStarts[t1][u1];
                 rt1 = Math.Max(1, rt1);
                 foreach (var (t2, u2, v2t, rt2) in chains.Skip(idx + 1)) {
                     if (t2 == t1)
                         continue;
                     
-                    BoolVar ch = null;
-                    var v2succs = new List<int> { -1 };
-                    if (problem.Trains[t2][v2t].Successors.Count > 0)
-                        v2succs = problem.Trains[t2][v2t].Successors;
+                    var v2succs = problem.Trains[t2][v2t].Successors;
+                    if (v1succs.Count <= 0 && v2succs.Count <= 0)
+                        continue;
+
+                    disjunctions++;
+                    var ch = model.NewBoolVar($"c_{t1}_{u1}_{t2}_{u2}");
+                    // ch == 1 implies u2 after v1
+                    var d1u = distances[t1][u1];
+                    var d2u = distances[t2][u2];
+                    model.AddHint(ch, d1u < d2u);
+                    
+                    // if (d2u2 - d1v1 > 40 * durationAverage + rt1) {
+                    //     // var c1 = model.Add(u2s >= v1s + rt1);
+                    //     // if (oei1.Count > 0)
+                    //     //     c1.OnlyEnforceIf(oei1.ToArray());
+                    //     gapped++;
+                    //     continue;
+                    // }
+
                     var u2s = outerStarts[t2][u2];
                     var rt2a = Math.Max(1, rt2);
 
                     foreach (var v1 in v1succs) {
-                        foreach (var v2 in v2succs) {
-                            
-                            LinearExpr v1s = v1 < 0 ? u1s + problem.Trains[t1][v1t].MinDuration : outerStarts[t1][v1];
-                            var en1 = (ILiteral)outerEnablers[t1].GetValueOrDefault((v1t, v1), null);
-                            var oei1 = new List<ILiteral>();
-                            if (en1 != null)
-                                oei1.Add(en1);
+                        var v1s = outerStarts[t1][v1];
+                        var en1 = (ILiteral)outerEnablers[t1].GetValueOrDefault((v1t, v1), null);
+                        var oei1 = new List<ILiteral>();
+                        if (en1 != null)
+                            oei1.Add(en1);
 
-                            LinearExpr v2s = v2 < 0 ? u2s + problem.Trains[t2][v2t].MinDuration : outerStarts[t2][v2];
-                            var en2 = (ILiteral)outerEnablers[t2].GetValueOrDefault((v2t, v2), null);
-                            var oei2 = new List<ILiteral>();
-                            if (en2 != null)
-                                oei2.Add(en2);
-                            
-                            // we have to filter some of these out, and we have to be smart about it.
-                            // if v1 is way before u2, and there is 20% the room necessary between them, let's just assume
-                            // that the item will get done in that order.
-                            var d1v1 = 0;
-                            var d2u2 = 0;
-                            if (v1 >= 0 && v2 >= 0) {
-                                d1v1 = distances[t1][v1];
-                                d2u2 = distances[t2][u2];
-                                if (d2u2 - d1v1 > 40 * durationAverage + rt1) {
-                                    // var c1 = model.Add(u2s >= v1s + rt1);
-                                    // if (oei1.Count > 0)
-                                    //     c1.OnlyEnforceIf(oei1.ToArray());
-                                    gapped++;
-                                    continue;
-                                }
-                                
-                                var d1u1 = distances[t1][u1];
-                                var d2v2 = distances[t2][v2];
-                                if (d1u1 - d2v2 > 40 * durationAverage + rt2a) {
-                                    // var c1 = model.Add(u1s >= v2s + rt2a);
-                                    // if (oei2.Count > 0)
-                                    //     c1.OnlyEnforceIf(oei2.ToArray());
-                                    gapped++;
-                                    continue;
-                                }
-                            }
+                        oei1.Add(ch);
+                        model.Add(u2s >= v1s + rt1).OnlyEnforceIf(oei1.ToArray());
+                    }
 
-                            if (ch == null) {
-                                ch = model.NewBoolVar($"c_{t1}_{u1}_{t2}_{u2}");
-                                // ch == 1 implies u2 after v1
-                                model.AddHint(ch, d1v1 < d2u2);
-                            }
-
-                            oei1.Add(ch);
-                            oei2.Add(ch.Not());
-                            model.Add(u2s >= v1s + rt1).OnlyEnforceIf(oei1.ToArray());
-                            model.Add(u1s >= v2s + rt2a).OnlyEnforceIf(oei2.ToArray());
-                            disjunctions++;
-                        }
+                    foreach (var v2 in v2succs) {
+                        LinearExpr v2s = v2 < 0 ? u2s + problem.Trains[t2][v2t].MinDuration : outerStarts[t2][v2];
+                        var en2 = (ILiteral)outerEnablers[t2].GetValueOrDefault((v2t, v2), null);
+                        var oei2 = new List<ILiteral>();
+                        if (en2 != null)
+                            oei2.Add(en2);
+                        
+                        oei2.Add(ch.Not());
+                        model.Add(u1s >= v2s + rt2a).OnlyEnforceIf(oei2.ToArray());
                     }
                 }
             }
@@ -231,8 +212,8 @@ class Program {
 
     static void Main() {
         // var problemFile = "../../../../../displib_instances_testing/displib_instances_testing/displib_testinstances_swapping2.json";
-        var problemFile = "../../../../../displib_instances_phase1/line1_critical_6.json";
-        // var problemFile = "../../../../../displib_instances_phase1/line1_full_7.json";
+        // var problemFile = "../../../../../displib_instances_phase1/line1_critical_6.json";
+        var problemFile = "../../../../../displib_instances_phase1/line1_full_2.json";
         // var problemFile = "../../../../../displib_instances_phase1/line3_5.json";
         // var problemFile = "../../../../../displib_instances_phase2/line8_large_4.json";
         // var problemFile = "../../../../../displib_instances_phase2/line3_7.json";

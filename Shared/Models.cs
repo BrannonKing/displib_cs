@@ -17,6 +17,10 @@ public class Resource {
 
     public override bool Equals(object obj) => obj is Resource other && Name == other.Name;
     public override int GetHashCode() => Name.GetHashCode();
+
+    public override string ToString() {
+        return $"{Name} ({ReleaseTime})";
+    }
 }
 
 public class Segment {
@@ -79,15 +83,17 @@ public class Problem {
 
     public Chain FindResourceChain(int t, int v, string name) {
         var train = Trains[t];
-        // while(train[v].Successors.Count == 1 && train[train[v].Successors[0]].Resources.Any(r => r.Name == name))
-        //     v = train[v].Successors[0]; // not working; prolly needs to check predecessors too
+        while(train[v].Successors.Count == 1 && train[train[v].Successors[0]].Predecessors.Count == 1 && train[train[v].Successors[0]].Resources.Any(r => r.Name == name))
+            v = train[v].Successors[0];
         int u = FindStartOfChain(train, v, name);
         return new Chain(t, u, v, train[v].Resources.First(x => x.Name == name).ReleaseTime);
     }
 
-    public Dictionary<string, List<Chain>> FindResourceChains() {
+    public Dictionary<string, List<Chain>> FindResourceChains(IReadOnlySet<int> mask) {
         var result = new Dictionary<string, List<Chain>>();
         for (int t = 0; t < Trains.Count; t++) {
+            if (mask.Contains(t))
+                continue;
             var train = Trains[t];
             for (int v = 0; v < train.Count; v++) {
                 foreach (var resource in train[v].Resources) {
@@ -125,9 +131,11 @@ public class Problem {
         return v;
     }
 
-    public int FindUpperBound() {
+    public int FindUpperBound(IReadOnlySet<int> mask) {
         var result = 0;
         for (int t = 0; t < Trains.Count; t++) {
+            if (mask.Contains(t))
+                continue;
             var ub = 0;
             for (int u = 0; u < Trains[t].Count; u++) {
                 var segment = Trains[t][u];
