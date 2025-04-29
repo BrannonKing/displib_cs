@@ -19,7 +19,7 @@ public class Resource {
     public override int GetHashCode() => Name.GetHashCode();
 
     public override string ToString() {
-        return $"Resource: {Name} ({ReleaseTime})";
+        return $"{Name} ({ReleaseTime})";
     }
 }
 

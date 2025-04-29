@@ -7,7 +7,7 @@ using TqdmSharp;
 class Program {
     static (CpModel model, List<List<IntVar>> outerStarts, List<Dictionary<(int, int), LinearExpr>> outerEnablers)
         BuildCpModel(Problem problem, int maxGap) {
-        int upperBound = problem.FindUpperBound();
+        int upperBound = problem.FindUpperBound(new HashSet<int>());
         var distances = problem.FindShortestPaths();
 
         var model = new CpModel();
@@ -77,7 +77,7 @@ class Program {
         }
         var durationAverage = durationSum / durationsAdded;
 
-        var tToChains = problem.FindResourceChains();
+        var tToChains = problem.FindResourceChains(new HashSet<int>());
         var disjunctions = 0;
         var gapped = 0;
         foreach (var chains in Tqdm.Wrap(tToChains.Values)) {
