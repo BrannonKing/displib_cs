@@ -59,7 +59,8 @@ class Program {
 
         var model = new GRBModel(env);
         model.ModelName = problem.Name;
-        // model.Parameters.IntFeasTol = .47 / (upperBound * 0.25);
+        // model.Parameters.IntFeasTol = 1.0 / upperBound;
+        model.Parameters.IntFeasTol = 0.000005; // our upperBound is too lousy to use here
         model.Parameters.IntegralityFocus = 1;
 
         var outerEnablers = new Dictionary<int, Dictionary<(int, int), GRBVar>>(problem.Trains.Count);
@@ -373,7 +374,8 @@ class Program {
         // model.Parameters.Method = 1;
         // model.Parameters.Crossover = 0;
         // model.Parameters.NodeMethod = 1;
-        model.Parameters.Heuristics = 0.12;
+        model.Parameters.Heuristics = 0.2;
+        model.Parameters.RINS = 100;
         model.Parameters.LogToConsole = verbose ? 1 : 0;
         
         if (disjunctionVars.Length > MaxConsToAdd) {
@@ -539,8 +541,8 @@ class Program {
         // you can repair a failed solution by changing start times.
         // cutting the disjunctions instead makes unnecessary changes.
         // var problemFile = "../../../../../displib_instances_testing/displib_instances_testing/displib_testinstances_headway1.json";
-        // var problemFile = "../../../../../displib_instances_phase1/line1_full_7.json";
-        var problemFile = args.Length > 0 ? args[0] : "../../../../../displib_instances_phase1/line1_critical_6.json";
+        // var problemFile = "../../../../../displib_instances_phase1/line1_full_8.json";
+        var problemFile = args.Length > 0 ? args[0] : "../../../../../displib_instances_phase1/line1_full_8.json";
         // var problemFile = "../../../../../displib_instances_phase2/line3_8.json";
         // var problemFile = "../../../../../displib_instances_phase1/line3_5.json";
         // var problemFile = "../../../../../displib_instances_phase1/line2_headway_3.json";
