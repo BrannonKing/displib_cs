@@ -537,17 +537,7 @@ class Program {
 
     static void Main(string[] args) {
         var sw = Stopwatch.StartNew();
-        // this approach fails because of a faulty assumption:
-        // you can repair a failed solution by changing start times.
-        // cutting the disjunctions instead makes unnecessary changes.
-        // var problemFile = "../../../../../displib_instances_testing/displib_instances_testing/displib_testinstances_headway1.json";
-        // var problemFile = "../../../../../displib_instances_phase1/line1_full_8.json";
-        var problemFile = args.Length > 0 ? args[0] : "../../../../../displib_instances_phase1/line1_full_8.json";
-        // var problemFile = "../../../../../displib_instances_phase2/line3_8.json";
-        // var problemFile = "../../../../../displib_instances_phase1/line3_5.json";
-        // var problemFile = "../../../../../displib_instances_phase1/line2_headway_3.json";
-        // var problemFile = args.Length > 0 ? args[0] : "../../../../../displib_instances_phase2/line8_small_2.json";
-        // var problemFile = args.Length > 0 ? args[0] : "../../../../../displib_instances_phase2/line4_large_6.json";
+        var problemFile = args.Length > 0 ? args[0] : "../../../../../displib_instances_phase2/line4_large_6.json";
         var problem = Problem.LoadFromFile(problemFile);
         Console.WriteLine("Building model for " + problem.Name + ". Trains: " + problem.Trains.Count);
         var solution = BuildAndOptimize(problem, sw, 598, true);
