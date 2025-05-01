@@ -1,4 +1,4 @@
-﻿namespace program;
+namespace program;
 
 using Shared;
 using Google.OrTools.Sat;
@@ -52,7 +52,7 @@ class Program {
             if (needsEnablers >= 0) {
                 for (var u = needsEnablers; u < train.Count; u++) {
                     LinearExpr predecessors = model.NewConstant(1);
-                    if (u > 0) {
+                    if (u > needsEnablers) {
                         var preds = train[u].Predecessors.Select(p =>
                             outerEnablers[t].GetValueOrDefault((p, u), model.NewConstant(1))).ToList();
                         predecessors = LinearExpr.Sum(preds);
@@ -126,7 +126,7 @@ class Program {
                     }
 
                     foreach (var v2 in v2succs) {
-                        LinearExpr v2s = v2 < 0 ? u2s + problem.Trains[t2][v2t].MinDuration : outerStarts[t2][v2];
+                        LinearExpr v2s = outerStarts[t2][v2];
                         var en2 = (ILiteral)outerEnablers[t2].GetValueOrDefault((v2t, v2), null);
                         var oei2 = new List<ILiteral>();
                         if (en2 != null)
